@@ -64,12 +64,34 @@ struct MacRootView: View {
     private static let sidebarRowContentInset: CGFloat = 12
     /// 选中底色离行边的距离。比 `contentInset` 小，底色才比内容宽出一圈。
     private static let sidebarRowHighlightInset: CGFloat = 6
-    /// 选中底色比系统那个灰再深多少（0…1）。
+    /// 选中底色的圆角。连续曲率 —— 跟系统画圆角那一套一致，别用正圆角。
+    private static let sidebarSelectionCornerRadius: CGFloat = 7
+    /// 选中高亮压多深（0…1）。见 `sidebarSelectionFill`。
     ///
-    /// 系统给的 `unemphasizedSelectedContentBackgroundColor` 铺在侧边栏材质上偏淡，
-    /// 扫一眼不容易看出选的是哪一项。往深里带一点就够了，带多了就成另一块控件。
-    /// 见 `sidebarSelectionFill`。
-    private static let sidebarSelectionDepth: CGFloat = 0.10
+    /// 0.14 这个数：正常背景下的深浅跟以前那块调过的实色灰差不多，
+    /// 压着纯黑窗口时大约还留 0.09~0.10 的差（以前是 0——整块化进去）。
+    /// 嫌浅往 0.18 走，嫌重回 0.10。
+    private static let sidebarSelectionOpacity: CGFloat = 0.14
+    /// 选中高亮铺的那一层：**半透明的黑**（深色外观下是白），不是一块实色灰。
+    ///
+    /// 这条栏是 `.behindWindow` 的毛玻璃，它自己的明度跟着窗口后面那个窗口走。
+    /// 窗口后面压一个纯黑窗口的时候，整条栏会落到某个灰上 —— 连系统那个选中材质
+    /// （`NSVisualEffectView.material = .selection`）都一起落在那儿：本机试过，
+    /// 选中那块整块化进去，肉眼就是「完全没有选中」。所以问题不是「哪个灰对」：
+    /// 只要是个**绝对值**，就总有一个背景明度能让它撞上。
+    ///
+    /// 改成半透明就绕开了这件事：压出来的差是底下那层明度的**固定比例**
+    /// （0.14 上下），底下亮就压得暗、底下暗就提得亮，任何背景上都留着一档差。
+    ///
+    /// 顺带一个好处：半透明意味着高亮底下的毛玻璃**照样透出来**，它只是把这一块
+    /// 稍微压暗／提亮一点，不是盖一张贴纸上去 —— 这条栏还是那条栏。
+    ///
+    /// 深色外观下用白不是随手写的：方向跟这一行的字色一致（浅色字黑、深色字白），
+    /// 字在选中块上不会反过来发闷。
+    private static let sidebarSelectionFill = Color(nsColor: NSColor(name: nil) { appearance in
+        let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        return (isDark ? NSColor.white : NSColor.black).withAlphaComponent(sidebarSelectionOpacity)
+    })
     /// 一行上下各留多少 —— 行高主要就是这个数加字号。
     private static let sidebarRowVerticalPadding: CGFloat = 9
     private static let sidebarRowSpacing: CGFloat = 2
@@ -265,32 +287,14 @@ struct MacRootView: View {
         .padding(.top, Self.sidebarRowTopInset)
     }
 
-    /// 选中底色。系统那个灰再压深一档。
-    ///
-    /// 写成 `NSColor(name:dynamicProvider:)` 而不是自己判断浅色/深色两套写法：
-    /// 这样它还是个真正的系统色 —— 深色外观下往白里带、浅色外观下往黑里带，
-    /// 两个模式都是「更显眼」，外观一换系统自己会重画。
-    /// `performAsCurrentDrawingAppearance` 不能省：不套它，里面取到的系统色
-    /// 是按「当前」外观解的，切外观那一刻会拿到旧的那份。
-    private static let sidebarSelectionFill = Color(nsColor: NSColor(name: nil) { appearance in
-        let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-        // 混色得在「这个外观」里做：`performAsCurrentDrawingAppearance` 只管
-        // 把上下文切成传进来的那份外观，取不到返回值，所以从外面接一下。
-        var blended: NSColor?
-        appearance.performAsCurrentDrawingAppearance {
-            blended = NSColor.unemphasizedSelectedContentBackgroundColor
-                .blended(withFraction: sidebarSelectionDepth, of: isDark ? .white : .black)
-        }
-        return blended ?? .unemphasizedSelectedContentBackgroundColor
-    })
+    // MARK: - 侧边栏里的一行
 
     /// 侧边栏里的一行。字号、图标和行高都比系统默认那档大一截 ——
     /// mac 的 List 默认一行只有 11pt 字、24pt 高，四个词排下来挤成一条，
     /// 跟 App Store 那条侧边栏摆一块就不像一家的。字号和图标大小见上面几个常量。
     ///
-    /// 选中态是自己画的，三样东西各归各的：
-    /// 底色用系统那个「未强调的选中灰」再压深一点（见 `sidebarSelectionFill`
-    /// —— 就是窗口没焦点时系统给的那个灰），图标一律强调色，文字一律标准色。
+    /// 选中态那三样东西各归各的：底色是**半透明的一层灰**（见
+    /// `sidebarSelectionFill`），图标一律强调色，文字一律标准色。
     /// 这三样系统那套凑不齐：它一律是强调色底 + 白字。
     ///
     /// 图标**不跟选中走**：选中与否都是蓝的。侧边栏这几个图标是「这是哪一页」
@@ -321,14 +325,19 @@ struct MacRootView: View {
             // 选中底色铺在行的内容底下。以前是 `listRowBackground` ——
             // 那个是 List 的插槽，现在没有 List 了，直接挂背景上。
             //
-            // 圆角比系统那个浅一点、左右各留一点：系统给侧边栏画选中时也是缩进一块，
+            // 左右各留一点：系统给侧边栏画选中时也是缩进一块，
             // 铺满整行会顶到栏位边缘，看着像另一个控件。
             // 底色比行内容少缩进几笔，图标才不贴着底色边（那圈余量见上面几个常量）。
-            .background(
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(isSelected ? Self.sidebarSelectionFill : Color.clear)
-                    .padding(.horizontal, Self.sidebarRowHighlightInset)
-            )
+            //
+            // 画它的不是一块实色灰（那块在深色背景下会跟栏撞成一片，见
+            // `sidebarSelectionFill`），是半透明的一层 —— 毛玻璃从它底下透出来。
+            .background {
+                if isSelected {
+                    RoundedRectangle(cornerRadius: Self.sidebarSelectionCornerRadius, style: .continuous)
+                        .fill(Self.sidebarSelectionFill)
+                        .padding(.horizontal, Self.sidebarRowHighlightInset)
+                }
+            }
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
