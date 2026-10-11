@@ -2,6 +2,11 @@
 #
 # gitignore contributors: remember to update Global/Xcode.gitignore, Objective-C.gitignore & Swift.gitignore
 
+# 注意：BiliDown.xcodeproj 和 Sources/*/Info.plist 是**入库**的。
+# 它们虽然由 `xcodegen generate` 从 project.yml 生成，但入库是有意的：
+# 别人 clone 下来直接双击就能编译，不用先装 XcodeGen。
+# 改了 project.yml 之后记得跑一次 xcodegen，把这两样一起提交上去，别让它们对不上。
+
 ## User settings
 xcuserdata/
 
@@ -13,21 +18,37 @@ xcuserdata/
 *.dSYM.zip
 *.dSYM
 
+## 构建产物
+#
+# 平时都编在仓库外面（-derivedDataPath /tmp/…），手滑在仓库里编一次就会冒出来
+build/
+build-release/
+DerivedData/
+# 解开的 .ipa 目录树：`unzip BiliDown.ipa` 出来的就是它
+Payload/
+
+## 本机的工程状态，Xcode 一打开就改
+*.xcuserstate
+*.xcscmblueprint
+*.xccheckout
+
 ## Playgrounds
 timeline.xctimeline
 playground.xcworkspace
 
 # Swift Package Manager
 #
-# Add this line if you want to avoid checking in source code from Swift Package Manager dependencies.
+# 只忽略构建时写出来的那份锁文件（在
+# `BiliDown.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/` 里）。
+# 它入库也没用：SwiftLAME 的版本本来就钉在 project.yml 的 revision 上，
+# 这份锁文件说不出比那更多的东西，只会每次构建都把工作区弄脏。
+#
+# 下面几行是模板里「把依赖源码整个入库」那套路子，这个项目不走，保留原样。
 # Packages/
 # Package.pins
-# Package.resolved
 # *.xcodeproj
-#
-# Xcode automatically generates this directory with a .xcworkspacedata file and xcuserdata
-# hence it is not needed unless you have added a package configuration file to your project
-# .swiftpm
+Package.resolved
+.swiftpm/
 
 .build/
 
@@ -63,3 +84,10 @@ fastlane/test_output
 
 # macOS
 .DS_Store
+
+# Claude Code 的本地权限白名单：记的是这台机器上放行过哪些命令，
+# 属于本机状态，不是项目的一部分。
+.claude/settings.local.json
+
+# 本机的签名 / DEVELOPMENT_TEAM 覆盖，别提交
+*.local.xcconfig
