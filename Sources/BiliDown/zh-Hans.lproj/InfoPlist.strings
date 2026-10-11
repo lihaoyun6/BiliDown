@@ -1,0 +1,5 @@
+/* 这个文件本身没什么要翻译的 —— App 里没有多语言。
+   它的用处是让包里真的存在一个 zh-Hans 本地化目录：
+   声明了语言还不够，UIKit 找自己那套控件文案时是照着包里
+   实际有的本地化去找的，光靠 Info.plist 里那两个键不保险。 */
+CFBundleDisplayName = "BiliDown";

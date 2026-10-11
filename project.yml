@@ -1,0 +1,230 @@
+name: BiliDown
+options:
+  bundleIdPrefix: com.lihaoyun6
+  createIntermediateGroups: true
+  # 项目本身的开发区域也跟着走中文（理由见下面 Info.plist 里那段注释）
+  developmentLanguage: zh-Hans
+  deploymentTarget:
+    iOS: "17.0"
+    # macOS 版的下限。13 是 NavigationSplitView 的底线，也是能覆盖到最多人的那一档。
+    # 13 上缺的主要是 onChange 的两参数写法（同时给新旧值那个，14 才有）——
+    # 那一个在 BiliUI 里用 ViewCompat 收了口，共享视图照旧写 onChangeCompat 就行，
+    # 不用为它把下限抬上去。
+    macOS: "13.0"
+  groupSortPosition: top
+
+# MP3 编码器。系统只有 MP3 解码器，没有编码器（`afconvert -hf` 里根本没有
+# MP3 那一档），所以导出 MP3 只能靠 LAME。
+#
+# 以前是往 Vendor/ 里塞一个预编译的 LAME.xcframework —— 那个包只有 iOS 切片，
+# macOS 那边是空的，于是 mac 版一直没有 MP3。现在改用这个 SwiftPM 包装器：
+# 它把 LAME 的 C 源码整个带在包里，两端各自按自己的 SDK 编，一个依赖管两边。
+#
+# **必须钉 revision，不能写 `from:`。** LAME 那个 target 带了 unsafeFlags
+# （`-w` 之类），SwiftPM 对「按版本号要求的依赖」一律拒绝带 unsafeFlags 的包：
+# `error: the target 'LAME' in product 'SwiftLAME' contains unsafe build flags`。
+# 钉到具体 revision 就不查这一条了 —— 试过，能编。
+# 0.1.0 这个 tag 和 main 是同一个 commit，钉的是 tag 那一版。
+packages:
+  SwiftLAME:
+    url: https://github.com/hidden-spectrum/SwiftLAME.git
+    revision: 45d1b021c2bd2bbd38b9669934c0584cda0d1b6b
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    # 版本号和构建号的唯一来源，plist 里引用这两个，别再各自写死一份
+    MARKETING_VERSION: "1.0"
+    CURRENT_PROJECT_VERSION: "32"
+    CODE_SIGN_STYLE: Automatic
+    SWIFT_STRICT_CONCURRENCY: minimal
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+
+targets:
+  # 本来是 SwiftPM 本地包，但那样打进 App 里叫
+  # BiliCore_-6E95BA67713E8EEF_PackageProduct.framework —— 名字又长又带哈希。
+  # 反正它就是个纯逻辑模块，直接当普通 framework 建，产物就叫 BiliCore.framework。
+  # 两个 framework 都是双平台的：同一份源码、同一份构建配置，
+  # 由这个工程按各自 SDK 分别编出 iOS 版和 macOS 版。
+  BiliCore:
+    type: framework
+    platform: [iOS, macOS]
+    sources:
+      - path: BiliCore/Sources/BiliCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.lihaoyun6.BiliDown.BiliCore
+        GENERATE_INFOPLIST_FILE: YES
+        SKIP_INSTALL: YES
+
+  BiliKit:
+    type: framework
+    platform: [iOS, macOS]
+    sources:
+      - path: Sources/BiliKit
+    dependencies:
+      # 只链接不嵌入：BiliCore.framework 由 App 统一嵌一份，
+      # 免得 BiliKit.framework 里再套一份。
+      # 多平台 target 会被 XcodeGen 拆成 _iOS / _macOS 两个，依赖得指名道姓。
+      - target: BiliCore_iOS
+        platforms: [iOS]
+        embed: false
+      - target: BiliCore_macOS
+        platforms: [macOS]
+        embed: false
+      # 系统只有 MP3 解码器没有编码器，MP3 导出只能靠 LAME。
+      # 走 SwiftPM 的 SwiftLAME 包装器：它把 LAME 的 C 源码带在包里，
+      # 两端各自编一份，不用再为 macOS 单独准备切片。
+      # 它是个静态产物，不嵌 —— 直接链进 BiliKit.framework。
+      - package: SwiftLAME
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.lihaoyun6.BiliDown.BiliKit
+        GENERATE_INFOPLIST_FILE: YES
+        SKIP_INSTALL: YES
+
+  # 两端共用的展示件（视图和它那点纯逻辑）。
+  # 不放 BiliKit 里：BiliKit 是「服务/逻辑」那一层，让它开始拖 SwiftUI 进来，
+  # 分层就白分了；将来 macOS 想换个 Table 写法也用不着绕开一堆 View。
+  BiliUI:
+    type: framework
+    platform: [iOS, macOS]
+    sources:
+      - path: Sources/BiliUI
+    dependencies:
+      # 跟 BiliKit 一样，只链接不嵌入，由 App 统一嵌一份
+      - target: BiliCore_iOS
+        platforms: [iOS]
+        embed: false
+      - target: BiliCore_macOS
+        platforms: [macOS]
+        embed: false
+      - target: BiliKit_iOS
+        platforms: [iOS]
+        embed: false
+      - target: BiliKit_macOS
+        platforms: [macOS]
+        embed: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.lihaoyun6.BiliDown.BiliUI
+        GENERATE_INFOPLIST_FILE: YES
+        SKIP_INSTALL: YES
+
+  BiliDown:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources/BiliDown
+      # 图标。两端同一张 —— 放共用目录里，改一次两边跟着变，不会各自漂移。
+      # 那个 appiconset 里同时写着 ios 和 mac 两条，actool 按目标平台各取各的。
+      - path: Sources/Shared
+    dependencies:
+      - target: BiliKit_iOS
+      - target: BiliUI_iOS
+      - target: BiliCore_iOS
+        embed: true
+        codeSign: true
+    info:
+      path: Sources/BiliDown/Info.plist
+      properties:
+        CFBundleDisplayName: BiliDown
+        # 这个 App 没有做多语言，界面文案全是中文写死的。
+        # 但系统自己那套控件（搜索框旁边的「Cancel」、编辑态的「Done」、
+        # 滑动删除的「Delete」…）是 UIKit 画的，它按 App 的「首选语言」去取词。
+        # 包里一个 .lproj 都没有的时候，这个首选语言就回落到开发区域，
+        # 默认是 en —— 于是搜索框旁边蹦出个 Cancel。
+        # 把开发区域和声明支持的语言都钉成中文，UIKit 才会去取中文那套。
+        CFBundleDevelopmentRegion: zh-Hans
+        CFBundleLocalizations:
+          - zh-Hans
+        # 不写死，跟着上面那两个设置走
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        NSPhotoLibraryAddUsageDescription: 用于把下载好的视频保存到你的相册。
+        NSPhotoLibraryUsageDescription: 用于把下载好的视频保存到你的相册。
+        ITSAppUsesNonExemptEncryption: false
+        # 让 Documents/BiliDown 直接出现在「文件」App 里
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
+        # 接分享链接的唯一入口。系统把内容递给 App 只能靠「打开 URL」，
+        # 所以得先有自己的 scheme —— LiveContainer 就是拿这个把
+        # 分享的链接转交给 guest app 的（见 SharedLinkReceiver）。
+        CFBundleURLTypes:
+          - CFBundleTypeRole: Editor
+            CFBundleURLName: com.lihaoyun6.BiliDown
+            CFBundleURLSchemes:
+              - bilidown
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.lihaoyun6.BiliDown
+        TARGETED_DEVICE_FAMILY: "1"
+        # 图标是 Sources/BiliDown/Assets.xcassets 里那张 1024 的单尺寸图，
+        # 其余尺寸由 asset catalog 自己缩
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+    scheme:
+      testTargets: []
+
+  # macOS 版。跟 iOS 版共用一个工程、共用 BiliCore / BiliKit / BiliUI 三层，
+  # 界面是 Sources/BiliDownMac 那一套重写的。
+  # 不单开工程：上面那三个 framework 的 target 定义只能有一份，分工程必然漂移。
+  BiliDownMac:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sources/BiliDownMac
+      # 跟 iOS 版同一个图标目录
+      - path: Sources/Shared
+    dependencies:
+      - target: BiliKit_macOS
+      - target: BiliUI_macOS
+      - target: BiliCore_macOS
+        embed: true
+        codeSign: true
+    info:
+      path: Sources/BiliDownMac/Info.plist
+      properties:
+        CFBundleDisplayName: BiliDown
+        CFBundleDevelopmentRegion: zh-Hans
+        CFBundleLocalizations:
+          - zh-Hans
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        ITSAppUsesNonExemptEncryption: false
+        # 默认下载目录在 ~/Downloads/BiliDown。macOS 从 10.15 起
+        # 把「下载」文件夹划进了 TCC 保护范围，非沙盒的 App 碰它照样要弹窗 ——
+        # 没这句话系统不弹，只会静默地写不进去。
+        NSDownloadsFolderUsageDescription: 用于把下载好的视频保存到你的「下载」文件夹。
+        # 版权。系统那个「关于 BiliDown」面板（App 菜单里第一条）底下显示的
+        # 就是这一句 —— 那个面板只认 Info.plist 里这个键，在代码里怎么写都进不去。
+        # 设置页那一行「版权」读的也是这儿（见 MacSettingsView），别再写第二份。
+        NSHumanReadableCopyright: Copyright © 2026 lihaoyun6.
+        # 接分享链接的入口，跟 iOS 版是同一个 scheme ——
+        # 快捷指令那条路两端通用
+        CFBundleURLTypes:
+          - CFBundleTypeRole: Editor
+            CFBundleURLName: com.lihaoyun6.BiliDown
+            CFBundleURLSchemes:
+              - bilidown
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.lihaoyun6.BiliDown
+        # target 叫 BiliDownMac（跟 iOS 那个 target 区分开），
+        # 但产物得叫 BiliDown.app —— 不然 Dock 里、访达里都是「BiliDownMac」。
+        PRODUCT_NAME: BiliDown
+        # 不沙盒。跟 iOS 那边自签侧载的定位一致：选定的路径直接就能写，
+        # 不需要 security-scoped bookmark 那一套。
+        # 代价是开发期每次重编换签名都可能重弹一次 TCC。
+        ENABLE_APP_SANDBOX: NO
+        ENABLE_HARDENED_RUNTIME: NO
+        # 跟 iOS 版同一张图（见 Sources/Shared/Assets.xcassets）。
+        # 那个 appiconset 里 mac 那半边摆的是传统十尺寸（16…512 各 @1x/@2x），
+        # 不是 Xcode 界面上那个「Single Size」—— Xcode 16 的 actool 对
+        # 「idiom 写 mac、尺寸写 1024x1024」那条只回一句 unassigned child，
+        # 什么也不编。别看着别处的项目这么写就回来抄。
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+    scheme:
+      testTargets: []
