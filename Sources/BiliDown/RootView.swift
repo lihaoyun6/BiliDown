@@ -10,7 +10,7 @@ struct RootView: View {
     enum Tab: Hashable {
         case downloads
         case favorites
-        case collections
+        case more
         case settings
     }
 
@@ -30,15 +30,19 @@ struct RootView: View {
                 .tabItem { Label("下载", systemImage: "arrow.down.circle") }
                 .tag(Tab.downloads)
 
-            // 没登录就读不到自己的收藏夹和合集，所以这两个 Tab 登录后才出现
+            // 没登录就读不到自己的收藏夹、合集、追番这些东西，
+            // 所以这两个 Tab 登录后才出现
             if account.isLoggedIn {
                 FavoritesView()
                     .tabItem { Label("收藏", systemImage: "star") }
                     .tag(Tab.favorites)
 
-                CollectionsView()
-                    .tabItem { Label("合集", systemImage: "rectangle.stack") }
-                    .tag(Tab.collections)
+                // 合集 / 追番 / 追剧 / 稍后再看 / 历史记录都收在这一页里 ——
+                // 五个 Tab 换一个，标签栏才不会挤到第五个就得靠系统收起来。
+                // 跟着收藏一起等登录：里面那几样都是自己账号上的东西。
+                MoreView()
+                    .tabItem { Label("更多", systemImage: "ellipsis.circle") }
+                    .tag(Tab.more)
             }
 
             SettingsView()

@@ -4,8 +4,9 @@ import BiliKit
 import BiliUI
 
 /// macOS 版的壳：一条侧边栏 + 右边一整块内容。
-/// 侧边栏就四个格子（下载 / 收藏 / 合集 / 设置），收藏和合集登录后才出现 ——
-/// 跟 iOS 那边标签栏是同一套规矩，只是换了个摆法。
+/// 侧边栏是下载 / 收藏 / 合集 / 追番 / 追剧 / 稍后 / 历史 / 设置，
+/// 中间那六个登录后才出现 —— 跟 iOS 那边标签栏是同一套规矩，只是换了个摆法
+///（iOS 把追番那四个收进了「更多」那一页，标签栏摆不下八个）。
 ///
 /// 账号不放在「设置」里，挂在侧边栏最底下（App Store 就这个摆法）：
 /// 它是「当前是谁」这件事，不是一项设置。
@@ -15,7 +16,20 @@ struct MacRootView: View {
         case downloads
         case favorites
         case collections
+        case bangumi
+        case drama
+        case watchLater
+        case history
         case settings
+
+        /// 这一栏非登录不可（侧边栏上也就登录后才画得出来）。
+        /// 用来处理「正站在这一栏上退出登录」—— 那几页没了内容，得退回下载去。
+        var needsAccount: Bool {
+            switch self {
+            case .downloads, .settings: return false
+            case .favorites, .collections, .bangumi, .drama, .watchLater, .history: return true
+            }
+        }
     }
 
     @EnvironmentObject private var account: AccountStore
@@ -124,7 +138,7 @@ struct MacRootView: View {
             }
             .onChangeCompat(of: account.isLoggedIn) { loggedIn in
                 // 正站在收藏/合集页时退出登录，那一页就没内容了，退回下载去
-                if !loggedIn, section == .favorites || section == .collections {
+                if !loggedIn, section.needsAccount {
                     navigator.section = .downloads
                 }
             }
@@ -189,9 +203,9 @@ struct MacRootView: View {
         NavigationSplitView {
             sidebar
         } detail: {
-            // `.id(section)` 这一句不能省。收藏和合集都是 `MacLibraryList`，
-            // 只差一个 kind —— **类型相同，SwiftUI 就当成同一个视图接着用**，
-            // 里面那些翻到第几页、搜了什么字的状态也跟着留着。
+            // `.id(section)` 这一句不能省。收藏 / 合集 / 追番 / 追剧四栏都是
+            // `MacLibraryList`，只差一个 kind —— **类型相同，SwiftUI 就当成同一个
+            // 视图接着用**，里面那些翻到第几页、搜了什么字的状态也跟着留着。
             // 钉一个跟栏目走的身份，切一次重建一次，各栏目的状态各归各的。
             detailContent.id(section)
         }
@@ -204,6 +218,18 @@ struct MacRootView: View {
             MacLibraryList(kind: .favorites)
         case .collections:
             MacLibraryList(kind: .collections)
+        // 追番 / 追剧也是「先挑一季，再挑分集」，跟收藏夹 / 合集是同一个形状，
+        // 所以也过 MacLibraryList 那一层。
+        case .bangumi:
+            MacLibraryList(kind: .bangumi)
+        case .drama:
+            MacLibraryList(kind: .drama)
+        // 稍后和历史没有上一层列表：侧边栏点进来就是视频列表本身，
+        // 直接把详情页摆上。
+        case .watchLater:
+            MacLibraryDetailView(source: .watchLater)
+        case .history:
+            MacLibraryDetailView(source: .history)
         case .settings:
             MacSettingsView()
         case .downloads:
@@ -276,9 +302,16 @@ struct MacRootView: View {
         VStack(spacing: Self.sidebarRowSpacing) {
             sidebarRow("下载", systemImage: "arrow.down.circle", tag: .downloads)
 
+            // 这六个都是自己账号里的东西，一起等登录。
+            // 追番那四个跟 iOS 的「更多」是同一批，图标也用同一批 ——
+            // 两端各挑各的，同一件事在两个平台上会长成两个样子。
             if account.isLoggedIn {
                 sidebarRow("收藏", systemImage: "star", tag: .favorites)
                 sidebarRow("合集", systemImage: "rectangle.stack", tag: .collections)
+                sidebarRow("追番", systemImage: "sparkles.tv", tag: .bangumi)
+                sidebarRow("追剧", systemImage: "film", tag: .drama)
+                sidebarRow("稍后", systemImage: "clock", tag: .watchLater)
+                sidebarRow("历史", systemImage: "clock.arrow.circlepath", tag: .history)
             }
 
             sidebarRow("设置", systemImage: "gearshape", tag: .settings)

@@ -87,6 +87,24 @@ public final class DownloadQueue: ObservableObject {
         try await client.collectedItems(entry, page: page)
     }
 
+    // MARK: - 追番 / 追剧 / 稍后再看 / 历史记录
+
+    public func followedSeasons(type: Int, page: Int = 1) async throws -> (items: [FollowedSeason], hasMore: Bool) {
+        try await client.followedSeasons(type: type, page: page)
+    }
+
+    public func seasonEpisodes(seasonID: Int) async throws -> [FavItem] {
+        try await client.seasonEpisodes(seasonID: seasonID)
+    }
+
+    public func watchLater() async throws -> (items: [FavItem], total: Int) {
+        try await client.watchLater()
+    }
+
+    public func history(cursor: HistoryCursor?) async throws -> (items: [FavItem], hasMore: Bool, cursor: HistoryCursor) {
+        try await client.history(cursor: cursor)
+    }
+
     // MARK: - 队列操作
 
     @discardableResult

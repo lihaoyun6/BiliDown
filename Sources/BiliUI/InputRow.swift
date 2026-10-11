@@ -23,17 +23,17 @@ public struct InputRow: View {
     }
 
     let thumbnail: InputThumbnail
-    let line1: String
-    var line1Color: Color = .primary
-    /// 第二行：视频是 BV 号，整批来源是 UID / 合集 ID
-    let line2: String
-    /// 第三行：UP 主名（视频行才有，整批来源没有这个概念）。
+    let title: String
+    var titleColor: Color = .primary
+    /// 第二行的 UP 主名（视频行才有，整批来源没有这个概念）。
     /// **没有也得留着这一行的位置** —— 见 `VideoRowText`。
-    var line3: String?
+    var ownerName: String?
+    /// 第三行：视频是 BV 号，整批来源是 UID / 合集 ID
+    let identifier: String
     /// 封面上那个气泡里的字（单 P 视频的时长、多 P 视频的总 P 数）。
     /// 头像那种没有封面，用不上。
     var badge: String?
-    /// 第二行**最右头**那句话（多 P 视频的「已选 3 P」）。
+    /// 第三行**最右头**那句话（多 P 视频的「已选 3 P」）。
     var trailing: String?
     /// 有内容可挑才给按钮
     var onPick: (() -> Void)?
@@ -42,19 +42,19 @@ public struct InputRow: View {
 
     public init(
         thumbnail: InputThumbnail,
-        line1: String,
-        line1Color: Color = .primary,
-        line2: String,
-        line3: String? = nil,
+        title: String,
+        titleColor: Color = .primary,
+        ownerName: String? = nil,
+        identifier: String,
         badge: String? = nil,
         trailing: String? = nil,
         onPick: (() -> Void)? = nil
     ) {
         self.thumbnail = thumbnail
-        self.line1 = line1
-        self.line1Color = line1Color
-        self.line2 = line2
-        self.line3 = line3
+        self.title = title
+        self.titleColor = titleColor
+        self.ownerName = ownerName
+        self.identifier = identifier
         self.badge = badge
         self.trailing = trailing
         self.onPick = onPick
@@ -90,18 +90,19 @@ public struct InputRow: View {
 
     // MARK: - 右边那三行字
 
-    /// **三行：标题 / BV 号 / person + UP 主**，两端、三处列表全一样 ——
-    /// 排版本身在 `VideoRowText` 里（收藏夹、合集那两个视频列表也用同一份）。
+    /// **三行：标题 / person + UP 主 / touchid + BV 号**，两端、全 App 的
+    /// 列表行全一样 —— 排版本身在 `VideoRowText` 里（收藏夹、合集、历史记录
+    /// 那些视频列表也用同一份）。
     ///
-    /// 分 P 那个计数挂在 **BV 号那一行的最右头**（不是第三行）：它说的是
-    /// 「这个 BV 号底下的哪几 P」，跟号挨着才对；第三行留给 UP 主。
+    /// 分 P 那个计数挂在 **BV 号那一行的最右头**（不是中间那行）：它说的是
+    /// 「这个 BV 号底下的哪几 P」，跟号挨着才对。
     private var textBlock: some View {
         VideoRowText(
-            title: line1,
-            titleColor: line1Color,
-            identifier: line2,
-            trailing: trailing,
-            ownerName: line3
+            title: title,
+            titleColor: titleColor,
+            ownerName: ownerName,
+            identifier: identifier,
+            trailing: trailing
         )
     }
 

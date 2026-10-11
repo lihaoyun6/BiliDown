@@ -304,10 +304,10 @@ struct MacAddTargetsSheet: View {
 
         return InputRow(
             thumbnail: content.thumbnail,
-            line1: content.line1,
-            line1Color: content.line1Color,
-            line2: content.line2,
-            line3: content.line3,
+            title: content.title,
+            titleColor: content.titleColor,
+            ownerName: content.ownerName,
+            identifier: content.identifier,
             badge: content.badge,
             trailing: content.trailing,
             onPick: content.canPick ? {

@@ -3,16 +3,16 @@ import BiliCore
 import BiliKit
 import BiliUI
 
-/// 收藏夹列表 / 合集列表。两页长得几乎一样，只是数据来源和每行的第二行字不同，
-/// 所以合成一个视图，靠 `kind` 分。点进去之后都由 MacLibraryDetailView 接手。
+/// 收藏 / 合集 / 追番 / 追剧四页的**列表**这一层：一列条目，点进去才是视频。
+/// 四页长得几乎一样，只是数据来源和每行的第二行字不同，所以合成一个视图靠 `kind` 分。
+/// 点进去之后都由 MacLibraryDetailView 接手。
+///
+/// kind 直接把 iOS 那份 `LibraryListKind` 拿过来用：四页的标题、搜索框提示、
+/// 空态那几句话本来就只有一份文案，两边分开写迟早会各说各的。
+/// 只有 `.favorites` 是 mac 独有 —— iOS 的收藏是标签栏自己一整页。
 struct MacLibraryList: View {
 
-    enum Kind: Hashable {
-        case favorites
-        case collections
-    }
-
-    let kind: Kind
+    let kind: LibraryListKind
 
     @EnvironmentObject private var queue: DownloadQueue
     @EnvironmentObject private var settings: AppSettings
@@ -31,6 +31,7 @@ struct MacLibraryList: View {
 
     @State private var folders: [FavFolder] = []
     @State private var collections: [SubscribedCollection] = []
+    @State private var seasons: [FollowedSeason] = []
     @State private var page = 1
     @State private var hasMore = true
     @State private var isLoading = true
@@ -38,6 +39,12 @@ struct MacLibraryList: View {
     @State private var errorMessage: String?
     @State private var query = ""
     @State private var hud: HUD?
+
+    /// 行尾那个折角往里收多少。
+    ///
+    /// 10 是照着左边封面到行首那点空配的 —— 两头差不多宽，行看着才是居中的。
+    /// 嫌贴右边就往上加。
+    private static let disclosureTrailingInset: CGFloat = 10
 
     /// 那把锁的宽度得钉死。`lock.open` 比 `lock` 宽出一截，不框住的话
     /// 「公开」和「私密」会差出几个点，一列扫下来齐不齐一眼就看出来。
@@ -63,41 +70,10 @@ struct MacLibraryList: View {
         Group {
             if let opened = opened {
                 MacLibraryDetailView(source: opened)
-                    .toolbar {
-                        ToolbarItem(id: "library-back", placement: .navigation) {
-                            Button {
-                                self.opened = nil
-                            } label: {
-                                Label("返回", systemImage: "chevron.backward")
-                            }
-                            .help("返回收藏夹列表")
-                        }
-                    }
             } else {
                 content
-                    .navigationTitle(title)
-                    .searchable(text: $query, prompt: kind == .favorites ? "搜索收藏夹" : "搜索合集")
-                    .toolbar {
-                        // 刷新摆在搜索框左边。mac 上 `.searchable` 那个框永远占着
-                        // 顶栏最右一格，`.primaryAction` 的项就落在它左边紧挨着 ——
-                        // 所以这颗按钮不用自己找位置，placement 写对就行。
-                        //
-                        // 为什么非要有它：这一页会变。用户在 B 站那边新建 / 删掉
-                        // 一个收藏夹、订一个新合集，这页不重新拉就还摆着旧的。
-                        // `.refreshable` 那套是给下拉手势的，mac 的 List 不认，
-                        // 得有颗真按钮。
-                        //
-                        // id 见 MacDownloadsView 那段：切栏目时这棵子树会被重建，
-                        // 不钉 id 的话新旧两项对不上号，边上会冒出个空的溢出箭头。
-                        //
-                        // 按钮本身（图标多大、转圈怎么进出的）在 MacRefreshButton 里，
-                        // 跟详情页那颗是同一个 —— 顶栏那几个坑都写在那边。
-                        ToolbarItem(id: "library-refresh", placement: .primaryAction) {
-                            MacRefreshButton(isLoading: isLoading) {
-                                Task { await loadFirstPage() }
-                            }
-                        }
-                    }
+                    .navigationTitle(kind.title)
+                    .searchable(text: $query, prompt: kind.searchPrompt)
                     .task {
                         await waitForCredential()
                         await loadFirstPage()
@@ -105,6 +81,9 @@ struct MacLibraryList: View {
                     .refreshable { await loadFirstPage() }
             }
         }
+        // 顶栏那一份挂在 `Group` 上，**不跟着里面的 if/else 走**。
+        // 为什么，见 `toolbarContent` 上头那段。
+        .toolbar { toolbarContent }
         // 换栏目**不**清「点开的那一个」了 —— 去别处转一圈再回来该还站在原地，
         // 见 MacNavigator.openedLibrary。收藏和合集各记各的，也不会串。
         //
@@ -116,8 +95,48 @@ struct MacLibraryList: View {
         .hud($hud)
     }
 
-    private var title: String {
-        kind == .favorites ? "收藏" : "合集"
+    /// 这一页的顶栏：没点开夹子时是右上角那颗刷新，点开之后换成左上角的「返回」。
+    ///
+    /// **写在 `Group` 这一层，不写进 `if/else` 里面。** 这是踩出来的：
+    /// mac 上工具栏项是挂在**声明它的那个视图**身上的，那个视图一旦被换掉
+    ///（这儿就是进 / 出「某一季的分集」那一层），AppKit 就可能把项弄丢 ——
+    /// 表现是切几趟栏目之后，「刷新」或者详情页那颗「下载」就没了，
+    /// 得多切一下才回来。挂在外头这个不换的容器上，换的只有里面的内容，
+    /// 项本身一直都在。
+    ///
+    /// 同理，底下这两项都**不钉 id**。`ToolbarItem(id:)` 那个写法是给
+    ///「可自定义工具栏」用的，钉了反而会跟重建撞上：同 id 的新项插进去、
+    /// 旧项才被摘掉，AppKit 按 id 去重的时候就把整项丢了（也就是上面说的
+    /// 「缺按钮」）。下载页那排按钮也走过这条回头路 —— 原来一颗一个 id，
+    /// 是拿 id 去治「切栏目时旁边冒出个空的 >>」的；后来把六颗并成一组、
+    /// 不用 id 了，那毛病反而没再犯（见 MacDownloadsView 里那段）。
+    ///
+    /// 刷新摆在搜索框左边。mac 上 `.searchable` 那个框永远占着顶栏最右一格，
+    /// `.primaryAction` 的项就落在它左边紧挨着 —— 所以这颗按钮不用自己找位置，
+    /// placement 写对就行。为什么非要有它：这一页会变，用户在 B 站那边新建 /
+    /// 删掉一个收藏夹、订一个新合集，这页不重新拉就还摆着旧的；
+    /// `.refreshable` 那套是给下拉手势的，mac 的 List 不认，得有颗真按钮。
+    ///
+    /// 按钮本身（图标多大、转圈怎么进出的）在 MacRefreshButton 里，
+    /// 跟详情页那颗是同一个 —— 顶栏那几个坑都写在那边。
+    @ToolbarContentBuilder
+    private var toolbarContent: some ToolbarContent {
+        if opened != nil {
+            ToolbarItem(placement: .navigation) {
+                Button {
+                    opened = nil
+                } label: {
+                    Label("返回", systemImage: "chevron.backward")
+                }
+                .help("返回列表")
+            }
+        } else {
+            ToolbarItemGroup(placement: .primaryAction) {
+                MacRefreshButton(isLoading: isLoading) {
+                    Task { await loadFirstPage() }
+                }
+            }
+        }
     }
 
     // MARK: - 显示的那一份
@@ -127,6 +146,12 @@ struct MacLibraryList: View {
     /// 这个开关一关就得重新联网拉一遍才能把条目找回来。
     private var visibleFolders: [FavFolder] {
         SearchFilter.match(folders, query: query) { [$0.title] }
+    }
+
+    /// 追番 / 追剧列表。接口不给失效态（一季不会「已失效」，最多是下架后
+    /// 点不进去），所以这儿不过 `filterInvalidContent`。
+    private var visibleSeasons: [FollowedSeason] {
+        SearchFilter.match(seasons, query: query) { [$0.title] }
     }
 
     private var visibleCollections: [SubscribedCollection] {
@@ -164,7 +189,7 @@ struct MacLibraryList: View {
                         }
                         .buttonStyle(.plain)
                     }
-                } else {
+                } else if kind == .collections {
                     ForEach(visibleCollections) { collection in
                         Button {
                             opened = .collection(collection)
@@ -179,6 +204,26 @@ struct MacLibraryList: View {
                             // 比的是显示的那一份：过滤开着的时候，底层最后几条
                             // 可能是被藏起来的，等它们永远不会触发翻页
                             if collection.seasonID == visibleCollections.last?.seasonID {
+                                Task { await loadMore() }
+                            }
+                        }
+                    }
+
+                    if isLoadingMore {
+                        LoadMoreSpinner()
+                    }
+                } else {
+                    ForEach(visibleSeasons) { season in
+                        Button {
+                            opened = .season(season)
+                        } label: {
+                            seasonRow(season)
+                                .padding(.vertical, ListRowMetrics.macRowVerticalPadding)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .onAppear {
+                            if season.seasonID == visibleSeasons.last?.seasonID {
                                 Task { await loadMore() }
                             }
                         }
@@ -203,35 +248,41 @@ struct MacLibraryList: View {
             } else if let errorMessage {
                 ListPlaceholder(
                     icon: "exclamationmark.triangle",
-                    title: kind == .favorites ? "读不到收藏夹" : "读不到合集",
+                    title: kind.errorTitle,
                     message: errorMessage,
                     retry: { Task { await loadFirstPage() } }
                 )
             } else {
                 ListPlaceholder(
-                    icon: kind == .favorites ? "star" : "rectangle.stack",
-                    title: kind == .favorites ? "还没有收藏夹" : "还没有订阅合集",
-                    message: kind == .favorites
-                        ? "在 B 站建一个收藏夹，这里就能看到。"
-                        : "在 B 站订阅一个合集，这里就能看到。"
+                    icon: kind.icon,
+                    title: kind.emptyTitle,
+                    message: kind.emptyMessage
                 )
             }
         } else if isVisibleEmpty {
             ListPlaceholder(
                 icon: "magnifyingglass",
-                title: isSearching
-                    ? (kind == .favorites ? "没有匹配的收藏夹" : "没有匹配的合集")
-                    : "没有可显示的内容"
+                title: isSearching ? "没有匹配的" : "没有可显示的内容"
             )
         }
     }
 
+    /// 底层有没有东西（决定是画空态还是画列表）
     private var isEmpty: Bool {
-        kind == .favorites ? folders.isEmpty : collections.isEmpty
+        switch kind {
+        case .favorites: return folders.isEmpty
+        case .collections: return collections.isEmpty
+        case .bangumi, .drama: return seasons.isEmpty
+        }
     }
 
+    /// 有东西，只是这一下没筛出来（搜的词没对上，或者全被过滤掉了）
     private var isVisibleEmpty: Bool {
-        kind == .favorites ? visibleFolders.isEmpty : visibleCollections.isEmpty
+        switch kind {
+        case .favorites: return visibleFolders.isEmpty
+        case .collections: return visibleCollections.isEmpty
+        case .bangumi, .drama: return visibleSeasons.isEmpty
+        }
     }
 
     // MARK: - 行
@@ -269,9 +320,9 @@ struct MacLibraryList: View {
                 .foregroundStyle(.secondary)
             }
 
-            // 行尾那个数字搬进封面气泡了，这儿不用再撑着东西 ——
-            // 标题自己会占满，留着这个 Spacer 只是白占一点宽度。
-            Spacer(minLength: 0)
+            Spacer(minLength: 8)
+
+            disclosure
         }
     }
 
@@ -297,8 +348,63 @@ struct MacLibraryList: View {
                 .foregroundStyle(.secondary)
             }
 
-            Spacer(minLength: 0)
+            Spacer(minLength: 8)
+
+            disclosure
         }
+    }
+
+    /// 追番 / 追剧那一行。中间那行摆「更新至第 220 话」（接口给的 `index_show`）——
+    /// 追番列表里最要紧的就是这一句，比版权方名字有用得多；
+    /// 接口偶尔不给（还没开播的），这一行就空着，行高跟别的一样。
+    /// 集数写在封面气泡里，跟上面两行一个规矩。
+    private func seasonRow(_ season: FollowedSeason) -> some View {
+        HStack(spacing: 12) {
+            CoverThumbnail(url: season.coverURL, badge: "\(season.episodeCount)")
+
+            VStack(alignment: .leading, spacing: Self.textSpacing) {
+                Text(season.title)
+                    .font(Typography.rowTitle)
+                    .lineLimit(1)
+
+                Text(season.progressText)
+                    .font(Typography.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 8)
+
+            disclosure
+        }
+    }
+
+    /// 行尾那个「进下一级」的折角。
+    ///
+    /// 这几行挂的是 `Button`（点了是把这一项摆到详情那一层去），不是
+    /// `NavigationLink`，所以系统不会替我们画那个 `›`。iOS 那边是系统的
+    /// `NavigationLink` 自己画的，这边照它的样子补一个 —— 折角是个记号，
+    /// 不是内容，跟标题一样大就成了行里的第二个视觉重心。
+    ///
+    /// 字号跟着行里那两行小字（`Typography.caption`，mac 上是 12）走，
+    /// 不另开一档：同一张列表里，它该跟「公开 / 私密」「更新至第 220 话」
+    /// 是一路的，而不是自成一套。
+    ///
+    /// 颜色用**三级**：这是行尾最轻的一笔，二级在这儿跟「公开 / 私密」
+    /// 那些真信息一样重，一列扫下去它反倒抢眼。三级正好退到「只是告诉你
+    /// 这儿能点进去」。
+    ///
+    /// `trailingInset` 是把它从行尾往里收一点：贴着分隔线右端太满了，
+    /// 行看着像被顶到边上。收进来之后右边留出的那点空，跟左边封面到行首
+    /// 的距离差不多，一行才是两头透气。
+    ///
+    /// 四个列表（收藏 / 合集 / 追番 / 追剧）共用这一个 —— 它们点进去是
+    /// 同一件事，记号也得是同一个。
+    private var disclosure: some View {
+        Image(systemName: "chevron.right")
+            .font(Typography.caption.weight(.semibold))
+            .foregroundStyle(.tertiary)
+            .padding(.trailing, Self.disclosureTrailingInset)
     }
 
     // MARK: - 加载
@@ -345,6 +451,11 @@ struct MacLibraryList: View {
                 collections = result.items
                 hasMore = result.hasMore
                 page = 2
+            case .bangumi, .drama:
+                let result = try await queue.followedSeasons(type: kind.bangumiType ?? 1, page: 1)
+                seasons = result.items
+                hasMore = result.hasMore
+                page = 2
             }
         } catch {
             let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
@@ -356,16 +467,27 @@ struct MacLibraryList: View {
         isLoading = false
     }
 
+    /// 收藏夹是一次全拉回来的，没有下一页。另外三页都按页翻。
     private func loadMore() async {
-        guard kind == .collections, hasMore, !isLoadingMore, !isLoading else { return }
+        guard kind != .favorites, hasMore, !isLoadingMore, !isLoading else { return }
         isLoadingMore = true
         defer { isLoadingMore = false }
 
         do {
-            let result = try await queue.subscribedCollections(page: page)
-            let known = Set(collections.map(\.seasonID))
-            collections.append(contentsOf: result.items.filter { !known.contains($0.seasonID) })
-            hasMore = result.hasMore
+            switch kind {
+            case .collections:
+                let result = try await queue.subscribedCollections(page: page)
+                let known = Set(collections.map(\.seasonID))
+                collections.append(contentsOf: result.items.filter { !known.contains($0.seasonID) })
+                hasMore = result.hasMore
+            case .bangumi, .drama:
+                let result = try await queue.followedSeasons(type: kind.bangumiType ?? 1, page: page)
+                let known = Set(seasons.map(\.seasonID))
+                seasons.append(contentsOf: result.items.filter { !known.contains($0.seasonID) })
+                hasMore = result.hasMore
+            case .favorites:
+                return
+            }
             page += 1
         } catch {
             hasMore = false

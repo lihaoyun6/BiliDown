@@ -55,13 +55,17 @@ struct MacDownloadsView: View {
                     // iOS 那边是左滑出按钮，mac 上是右键菜单 —— 各按各的习惯来
                     .contextMenu {
                         if job.state == .stopped || job.state.isFailed {
-                            Button("重试") { queue.retry(job) }
+                            // 叫「开始下载」不叫「重试」：`retry` 在这儿干的就是
+                            // 从头下一遍，停止的和失败的走的是同一条路。
+                            Button("开始下载") { queue.retry(job) }
                         }
                         if job.state.isActive {
                             Button("停止") { queue.stop(job) }
                         }
                         Divider()
-                        Button("删除", role: .destructive) { queue.remove(job) }
+                        // 带「任务」两个字：右键菜单是贴在任务行上的，光写「删除」
+                        // 分不清删的是这条任务还是别的什么
+                        Button("删除任务", role: .destructive) { queue.remove(job) }
                     }
             }
         }

@@ -3,8 +3,12 @@ import BiliCore
 import BiliKit
 import BiliUI
 
-/// 一个收藏夹 / 一个合集里面的视频列表：勾几个，然后入队。
-/// 流程跟 iOS 版一模一样（分 P 的弹选择器、全选是真的「整个夹子」、
+/// 「挑视频」那一层：一个收藏夹 / 一个合集 / 一季番剧 / 稍后再看 / 历史记录
+/// 里面的视频列表 —— 勾几个，然后入队。
+///
+/// 五个来源在这一层长得一模一样，区别只有标题、空态文案和拉哪个接口，
+/// 所以共用这一个视图（跟 iOS 的 `VideoPickerView` 是两边各一份）。
+/// 流程也跟 iOS 版一模一样（分 P 的弹选择器、全选是真的「整个夹子」、
 /// 搜索得先把全量翻回来），差别只在按钮挪到了顶栏、左滑换成了右键菜单。
 struct MacLibraryDetailView: View {
 
@@ -21,7 +25,12 @@ struct MacLibraryDetailView: View {
     /// 一千条的收藏夹滚了二十条就点全选，那样只会下二十条。
     @State private var selectAllMode = false
     @State private var excluded: Set<String> = []
+    /// 正在为「全都要」点数（见 `toggleAll()`）。
+    @State private var isCountingAll = false
     @State private var page = 1
+    /// 历史记录不看页号，只认这个游标（见 `BiliClient.history`）。
+    /// 第一页是 nil，之后每翻一页就用上一页返回的那个。
+    @State private var cursor: HistoryCursor?
     @State private var hasMore = true
     @State private var isLoading = true
     @State private var isLoadingMore = false
@@ -42,20 +51,27 @@ struct MacLibraryDetailView: View {
                 guard !newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
                 Task { await loadRestForSearch() }
             }
+            // 顶栏左边「下载」、右边「刷新」，**一整组**。
+            //
+            // 原来这两颗是分开的两个 `ToolbarItem`，还各自钉了 id。那套在 mac 上
+            // 会把按钮弄丢：工具栏项是挂在声明它的视图身上的，这一页又会被整个
+            // 换掉（切栏目时 detail 挂着 `.id(section)`，追番那边进出分集也是换根），
+            // 钉了 id 的新旧两项赶上同一趟重建，AppKit 按 id 去重就把整项丢了 ——
+            // 表现就是「有时候缺下载，有时候下载和刷新都没了」。下载页那排按钮
+            // 也踩过，并成一组、不钉 id 之后就再没丢过（见 MacDownloadsView 里那段）。
+            //
+            // 并成一组还有个好处：这一组就一项，切栏目时新旧对得上号，
+            // 「旁边冒出个空的 >>」那个老毛病也不会回来。
+            //
+            // 次序是**先下载后刷新**：同一组里按声明顺序从左往右排，
+            // 而搜索框永远占着顶栏最右一格 —— 所以刷新落在下载右边、搜索框左边，
+            // 跟收藏 / 合集列表页那颗刷新在同一个位置上。
+            //
+            // 按钮本身在 MacRefreshButton 里，跟列表页那颗是同一个。
             .toolbar {
-                // id 见 MacDownloadsView 里那段：不写 id，重建时会对不上号，
-                // 加号旁边会多出一个空的溢出箭头。
-                ToolbarItem(id: "download-selection", placement: .primaryAction) {
+                ToolbarItemGroup(placement: .primaryAction) {
                     downloadMenu
-                }
 
-                // 刷新。**声明在下载菜单后面**，落点才是贴着搜索框那一边：
-                // 同一个 placement 的项按声明顺序从左往右排，而搜索框永远
-                // 占着顶栏最右一格 —— 所以它排在下载菜单右边、搜索框左边，
-                // 跟收藏 / 合集列表页那颗在同一个位置上。
-                //
-                // 按钮本身在 MacRefreshButton 里，跟列表页那颗是同一个。
-                ToolbarItem(id: "library-detail-refresh", placement: .primaryAction) {
                     MacRefreshButton(isLoading: isLoading) {
                         Task { await loadFirstPage() }
                     }
@@ -80,7 +96,7 @@ struct MacLibraryDetailView: View {
         } label: {
             Label(downloadButtonTitle, systemImage: "arrow.down.circle")
         }
-        .disabled(selectedCount == 0)
+        .disabled(selectedCount == 0 || isCountingAll)
     }
 
     // MARK: - 显示的那一份
@@ -105,14 +121,19 @@ struct MacLibraryDetailView: View {
                 // 这一格右端原来是收藏夹名 / 合集名 —— 那名字现在就在上面
                 // 那行页标题上，再来一遍是重复。改成报已选数量：
                 // 勾着勾着能看着它涨，比一个重复的名字有用。
-                SelectAllRow(
-                    state: allState,
-                    trailingText: selectedCountText,
-                    symbolFont: .title3
-                ) {
-                    toggleAll()
+                //
+                // 稍后再看有这一行（一次给全，数目数得出来），历史记录没有
+                // （游标翻页翻不到底）—— 谁摆谁不摆归 `supportsSelectAll` 管。
+                if source.supportsSelectAll {
+                    SelectAllRow(
+                        state: allState,
+                        trailingText: selectedCountText,
+                        symbolFont: .title3
+                    ) {
+                        toggleAll()
+                    }
+                    .padding(.vertical, ListRowMetrics.macRowVerticalPadding)
                 }
-                .padding(.vertical, ListRowMetrics.macRowVerticalPadding)
 
                 ForEach(visibleItems) { item in
                     FavItemRow(
@@ -168,21 +189,43 @@ struct MacLibraryDetailView: View {
         }
     }
 
-    /// 全都要的时候得报整个收藏夹的数量，不是已经拉到的那些。
-    /// 搜索状态下另说：那时候「全都要」就是「搜出来的这些」。
+    /// 「全都要」会下多少个。
+    ///
+    /// 全都要的时候得报整个收藏夹的数量，不是已经拉到的那些 —— 但**翻完之前
+    /// 那个数报不准**：开着「隐藏失效内容」的时候，接口给的总数里混着失效的，
+    /// 而失效的入不了队（见下面 performDownload 那一段）。
+    ///
+    /// 所以分两种情况：**翻完了就直接数手里这一份**（已经滤过失效，
+    /// 这个数跟真正入队的条数一定一样）；没翻完的先用接口的总数顶着，
+    /// 同时 `toggleAll()` 那边已经在翻了，转完就换成准的。
+    ///
+    /// 搜索状态下不用翻：打字那会儿已经把全量拉回来了，「全都要」就是
+    /// 「搜出来的这些」，数眼前这一份是准的。
+    ///
+    /// 稍后再看 / 历史记录走不到「全都要」（没有全选那一行），
+    /// 取 videoCount 的地方兜一个可见条数，纯粹是不想让这儿出现 `?? 0`。
     private var selectedCount: Int {
-        let total = isSearching ? visibleItems.count : source.videoCount
-        return selectAllMode ? max(total - excluded.count, 0) : selection.count
+        guard selectAllMode else { return selection.count }
+        if isSearching || !hasMore {
+            return max(visibleItems.count - excluded.count, 0)
+        }
+        return max((source.videoCount ?? visibleItems.count) - excluded.count, 0)
     }
 
     private var downloadButtonTitle: String {
-        selectedCount == 0 ? "下载" : "下载 \(selectedCount) 个"
+        if isCountingAll { return "统计中…" }
+        return selectedCount == 0 ? "下载" : "下载 \(selectedCount) 个"
     }
 
     /// 全选那一行右端那句话。一个没勾就空着 ——
     /// 「已选 0 个」是一句没有信息量的话，不如让那一格干净着。
+    ///
+    /// mac 这一格摆的**一直是**已选数量（夹子名挂在页标题上，这儿不放名字），
+    /// 所以「正在统计」这句话也得从这儿出 —— iOS 那边这一格放的是夹子名，
+    /// 那句话就只落在下载按钮上。
     private var selectedCountText: String? {
-        selectedCount == 0 ? nil : "已选 \(selectedCount) 个"
+        if isCountingAll { return "正在统计…" }
+        return selectedCount == 0 ? nil : "已选 \(selectedCount) 个"
     }
 
     // MARK: - 勾选
@@ -211,10 +254,24 @@ struct MacLibraryDetailView: View {
             selectAllMode = false
             selection.removeAll()
             excluded.removeAll()
-        } else {
-            selectAllMode = true
-            selection.removeAll()
-            excluded.removeAll()
+            return
+        }
+
+        selectAllMode = true
+        selection.removeAll()
+        excluded.removeAll()
+
+        // 「全都要」到底是多少个，开着「隐藏失效内容」的时候得把整个夹子翻完
+        // 才算得出来（接口的总数里混着失效的）。这一趟不用白翻：下载那一刻
+        // 本来就要翻，早翻还能让「已选 N 个」一开始就是准的 ——
+        // 不会出现「说好 220 个，结果只进来 215 个」。
+        //
+        // 开关关着的时候不用翻：那时候接口的总数就是准数。
+        guard settings.filterInvalidContent, hasMore, !isSearching else { return }
+        isCountingAll = true
+        Task {
+            _ = await loadAllItems()
+            isCountingAll = false
         }
     }
 
@@ -321,7 +378,10 @@ struct MacLibraryDetailView: View {
 
     // MARK: - 加载
 
-    /// 收藏夹和合集各走各的接口，出来的东西归一成同一种条目
+    /// 各个来源各走各的接口，出来的东西归一成同一种条目。
+    ///
+    /// `page` 对历史记录没意义（它是游标翻的），那种情况走 `cursor` 那个状态；
+    /// 别的来源每次调用都会把 cursor 覆盖成 nil 也无所谓，反正用不上。
     private func loadPage(_ page: Int) async throws -> (items: [FavItem], hasMore: Bool) {
         switch source {
         case .folder(let folder):
@@ -340,6 +400,21 @@ struct MacLibraryDetailView: View {
                 )
             }
             return (items, result.hasMore)
+
+        case .season(let season):
+            // 一季的分集一次全给（几百集也是一次），没有下一页
+            let episodes = try await queue.seasonEpisodes(seasonID: season.seasonID)
+            return (episodes, false)
+
+        case .watchLater:
+            // 同理：B 站这个列表封顶 100 条，也是一次给全
+            let result = try await queue.watchLater()
+            return (result.items, false)
+
+        case .history:
+            let result = try await queue.history(cursor: cursor)
+            cursor = result.cursor
+            return (result.items, result.hasMore)
         }
     }
 
@@ -365,6 +440,7 @@ struct MacLibraryDetailView: View {
         isLoading = true
         errorMessage = nil
         page = 1
+        cursor = nil
         hasMore = true
         do {
             let result = try await loadPage(1)
@@ -446,9 +522,11 @@ private struct FavItemRow: View {
                 // 跟添加任务那页解析出来的视频行、跟 iOS 那边是同一套排法
                 VideoRowText(
                     title: item.title,
+                    ownerName: item.upperName,
                     identifier: item.bvid,
-                    trailing: pageCountText,
-                    ownerName: item.upperName
+                    // 只有历史记录那几行有值，有了第三行就摆时间不摆 BV 号
+                    playedAt: item.playedAt,
+                    trailing: pageCountText
                 )
             }
             .contentShape(Rectangle())

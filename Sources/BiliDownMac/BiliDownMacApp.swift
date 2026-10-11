@@ -80,7 +80,7 @@ final class MacNavigator: ObservableObject {
     ///
     /// 按 `kind` 分开存：收藏和合集是同一个视图，只差一个 kind，
     /// 混在一个变量里就会出现「在合集里点开的东西跑到收藏里去了」。
-    @Published var openedLibrary: [MacLibraryList.Kind: LibrarySource] = [:]
+    @Published var openedLibrary: [LibraryListKind: LibrarySource] = [:]
 }
 
 /// 菜单栏。整组整组地覆盖系统默认那套 —— 这个 App 不是文档型应用，

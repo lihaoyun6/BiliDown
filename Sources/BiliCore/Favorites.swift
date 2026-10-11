@@ -41,6 +41,12 @@ public struct FavItem: Sendable, Hashable, Identifiable {
     public let upperName: String
     /// 总共几 P，列表接口直接带回来的
     public let pageCount: Int
+    /// 这个视频上次看是什么时候。**只有历史记录那条路会给**，别处一律 nil。
+    ///
+    /// 有了它，行里下面那两行整个换一套：第三行的 UP 主挪到第二行，
+    /// 第三行改摆「clock + 什么时候看的」（历史那一页上，什么时候看的比 BV 号
+    /// 有用得多，而 UP 主比时间更该排在前面）—— 见 `VideoRowText`。
+    public let playedAt: Date?
 
     public var id: String { bvid }
 
@@ -52,7 +58,8 @@ public struct FavItem: Sendable, Hashable, Identifiable {
         coverURL: URL?,
         duration: Int,
         upperName: String,
-        pageCount: Int = 1
+        pageCount: Int = 1,
+        playedAt: Date? = nil
     ) {
         self.bvid = bvid
         self.title = title
@@ -60,6 +67,7 @@ public struct FavItem: Sendable, Hashable, Identifiable {
         self.duration = duration
         self.upperName = upperName
         self.pageCount = max(pageCount, 1)
+        self.playedAt = playedAt
     }
 
     /// 已失效（被删/被下架）的稿件。B 站有两种写法：

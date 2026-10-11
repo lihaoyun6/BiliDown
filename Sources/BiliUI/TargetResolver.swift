@@ -7,13 +7,14 @@ import BiliKit
 /// 底层那份是「拉到什么就存什么」，「正在获取视频信息…」这种话是给人看的。
 public struct InputRowContent {
     public let thumbnail: InputThumbnail
-    public let line1: String
-    public let line1Color: Color
-    public let line2: String
-    /// 第三行的 UP 主名。整批来源没有这个概念（主页那条自己就是 UP 主，
+    public let title: String
+    public let titleColor: Color
+    /// 第二行的 UP 主名。整批来源没有这个概念（主页那条自己就是 UP 主，
     /// 合集那条接口不给名字），给 nil —— 那一行的地方照样留着。
-    public let line3: String?
-    /// 第二行**最右头**那句话：多 P 视频的「已选 3 P」（总 P 数在封面气泡里），
+    public let ownerName: String?
+    /// 第三行那串号：视频是 BV 号，整批来源是 UID / 合集 ID
+    public let identifier: String
+    /// 第三行**最右头**那句话：多 P 视频的「已选 3 P」（总 P 数在封面气泡里），
     /// 整批来源的「共 N 个视频 · 已选 N 个」。
     public let trailing: String?
     /// 封面上那个气泡里的字（单 P 视频的时长、多 P 视频的总 P 数）
@@ -140,10 +141,10 @@ public final class TargetResolver: ObservableObject {
             }
             return InputRowContent(
                 thumbnail: .cover(info?.coverURL),
-                line1: videoTitle(target.ref),
-                line1Color: videoTitleColor(target.ref),
-                line2: info?.bvid ?? target.ref.key,
-                line3: info?.ownerName,
+                title: videoTitle(target.ref),
+                titleColor: videoTitleColor(target.ref),
+                ownerName: info?.ownerName,
+                identifier: info?.bvid ?? target.ref.key,
                 trailing: selectedPages,
                 badge: badge,
                 canPick: info?.isMultiPage == true
@@ -156,14 +157,14 @@ public final class TargetResolver: ObservableObject {
 
             return InputRowContent(
                 thumbnail: bulkThumbnail(source, state: state),
-                line1: bulkTitle(source, state: state, failed: failed),
-                line1Color: failed ? .orange : .primary,
-                line2: bulkIdentifier(source),
+                title: bulkTitle(source, state: state, failed: failed),
+                titleColor: failed ? .orange : .primary,
                 // 整批来源没有 UP 主这一层：主页那条的第一行**就是**这个 UP 主的名字
                 // （再报一遍是重复），合集那条接口不给名字。空着，位置留着。
-                line3: nil,
+                ownerName: nil,
+                identifier: bulkIdentifier(source),
                 // 整批来源没有 P 数的概念：封面（合集封面 / UP 主头像）上没东西可标，
-                // 第二行最右头报的是「共 N 个视频 · 已选 N 个」——「这一批里有多少、
+                // 第三行最右头报的是「共 N 个视频 · 已选 N 个」——「这一批里有多少、
                 // 要下多少」是这一行的全部信息量。
                 trailing: detail.isEmpty ? nil : detail,
                 badge: nil,

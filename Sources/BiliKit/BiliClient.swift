@@ -345,6 +345,154 @@ public actor BiliClient {
         )
     }
 
+    // MARK: - 我追的番 / 我追的剧
+
+    /// 追番 / 追剧列表。`type`：1 = 番剧（含国创），2 = 影视（剧 / 电影 / 纪录片 / 综艺）。
+    ///
+    /// 列表里是**一整季**，不是单个分集 —— 分集见 `seasonEpisodes(seasonID:)`。
+    /// 这个接口上了 WBI 签名。
+    public func followedSeasons(type: Int, page: Int = 1) async throws -> (items: [FollowedSeason], hasMore: Bool) {
+        guard let credential, !credential.userId.isEmpty else { throw BiliError.notLoggedIn }
+
+        let perPage = 15
+        var components = URLComponents(string: "https://api.bilibili.com/x/space/bangumi/follow/list")!
+        components.queryItems = try await signedQuery([
+            "type": String(type),
+            // 0 = 全部。1 / 2 / 3 分别是想看 / 在看 / 看过，
+            // 这儿要的是「我追的」全部，不按状态分
+            "follow_status": "0",
+            "pn": String(page),
+            "ps": String(perPage),
+            "vmid": credential.userId,
+            "web_location": "333.1387"
+        ])
+
+        let data = try await get(components.url!)
+        let payload = try decode(FollowListData.self, from: data)
+
+        let items = (payload.list ?? []).map {
+            FollowedSeason(
+                seasonID: $0.season_id,
+                title: $0.title,
+                coverURL: Self.secureURL($0.cover),
+                episodeCount: $0.total_count,
+                // 「更新至第220话」。没开播 / 没更新过的这儿是空的
+                progressText: $0.new_ep?.index_show ?? ""
+            )
+        }
+        let total = payload.total ?? 0
+        return (items, !items.isEmpty && page * perPage < total)
+    }
+
+    /// 一季的全部分集。
+    ///
+    /// **不分页**：一个 season 的分集是一次全给的（几百集也一次给完）。
+    /// 电影这种只有一集，就是「正片」那一条。
+    ///
+    /// 两个坑：这个接口**不套 `data`**，结果直接摆在顶层 `result` 里；
+    /// 还有 `duration` 是**毫秒**（收藏夹那边是秒），这儿除掉了。
+    ///
+    /// 顺带一个坑：路径**没有 `x/`**。`api.bilibili.com/x/pgc/...` 会回 404 的
+    /// HTML 页（openresty 那张），解码的时候只会报一句「读不到」——
+    /// 别的接口几乎都带那个 `x/`，就这个不带。
+    public func seasonEpisodes(seasonID: Int) async throws -> [FavItem] {
+        var components = URLComponents(string: "https://api.bilibili.com/pgc/view/web/season")!
+        components.queryItems = [URLQueryItem(name: "season_id", value: String(seasonID))]
+
+        let data = try await get(components.url!)
+        let payload = try decodeResult(SeasonData.self, from: data)
+
+        return payload.episodes.map {
+            FavItem(
+                bvid: $0.bvid,
+                // show_title 是「第1话 为了消灭鬼舞辻无惨」这种拼好的整句，
+                // 单独一个 title 只有「1」。接口没给整句才退回 title。
+                title: $0.show_title ?? $0.title,
+                coverURL: Self.secureURL($0.cover),
+                duration: $0.duration / 1000,
+                // 分集这一页不报 UP 主：一季的投稿人就是版权方，
+                // 每一行都挂同一个名字没有意义
+                upperName: "",
+                pageCount: 1
+            )
+        }
+    }
+
+    // MARK: - 稍后再看 / 历史记录
+
+    /// 稍后再看。**不分页**：B 站这个列表最多就 100 条，一次给全。
+    /// 返回的 `total` 是接口报的条数，界面拿它当「全选」的数。
+    ///
+    /// 这个接口本身不查 WBI 签名，但还是照签 —— 签了在查 / 不查两种情况下都能过，
+    /// 不签就押在「它确实不查」上，哪天 B 站加一道就得回来改。
+    /// 签名用的 keys 是缓存的，这儿不多花一个请求。
+    public func watchLater() async throws -> (items: [FavItem], total: Int) {
+        var components = URLComponents(string: "https://api.bilibili.com/x/v2/history/toview")!
+        components.queryItems = try await signedQuery(["web_location": "333.1387"])
+
+        let data = try await get(components.url!)
+        let payload = try decode(ToViewData.self, from: data)
+
+        // 这个接口给的是完整的稿件对象，字段跟收藏夹那两个不一样：
+        // 封面叫 pic、UP 主在 owner.name 里、分 P 数是 videos。
+        let items = (payload.list ?? []).compactMap { entry -> FavItem? in
+            // 失效稿件没有 bvid，下不了，跳过
+            guard let bvid = entry.bvid, !bvid.isEmpty else { return nil }
+            return FavItem(
+                bvid: bvid,
+                title: entry.title,
+                coverURL: Self.secureURL(entry.pic ?? ""),
+                duration: entry.duration ?? 0,
+                upperName: entry.owner?.name ?? "",
+                pageCount: entry.videos ?? 1
+            )
+        }
+        return (items, payload.count ?? items.count)
+    }
+
+    /// 历史记录。游标翻页：`cursor` 传上一页拿到的那个，第一页传 nil。
+    ///
+    /// 这个接口上了 WBI 签名。里面的条目什么都有（视频 / 直播 / 专栏 / 番剧），
+    /// 只有带 bvid 的才是能下的视频，其余的在这儿滤掉。
+    ///
+    /// `hasMore` 判的是「这一页有没有东西」：历史这边没有总数，翻到头就是空页。
+    /// 宁可多问一次空的，也别拿一个猜的结束条件把后面的记录截掉。
+    public func history(cursor: HistoryCursor?) async throws -> (items: [FavItem], hasMore: Bool, cursor: HistoryCursor) {
+        var components = URLComponents(string: "https://api.bilibili.com/x/web-interface/history/cursor")!
+        components.queryItems = try await signedQuery([
+            "ps": "30",
+            "max": String(cursor?.max ?? 0),
+            "view_at": String(cursor?.viewAt ?? 0),
+            "business": cursor?.business ?? "",
+            "web_location": "333.1387"
+        ])
+
+        let data = try await get(components.url!)
+        let payload = try decode(HistoryData.self, from: data)
+
+        let raw = payload.list ?? []
+        let items = raw.compactMap { entry -> FavItem? in
+            // 直播 / 专栏那几条 bvid 是空串，只有视频能下
+            guard let bvid = entry.history?.bvid, !bvid.isEmpty else { return nil }
+            return FavItem(
+                bvid: bvid,
+                title: entry.title,
+                coverURL: Self.secureURL(entry.cover ?? ""),
+                duration: entry.duration ?? 0,
+                upperName: entry.author_name ?? "",
+                pageCount: entry.videos ?? 1,
+                playedAt: entry.view_at.map { Date(timeIntervalSince1970: TimeInterval($0)) }
+            )
+        }
+
+        let next = payload.cursor.map {
+            HistoryCursor(max: $0.max, viewAt: $0.view_at, business: $0.business)
+        } ?? cursor ?? HistoryCursor(max: 0, viewAt: 0, business: "")
+        // 判空用**原始**那一条：整页都是直播 / 专栏的时候 items 是空的，
+        // 但记录还没翻完，不能就此停住
+        return (items, !raw.isEmpty, next)
+    }
+
     // MARK: - 取流
 
     /// qn 直接要最高，服务器会按当前账号的权限降级。
@@ -507,6 +655,18 @@ public actor BiliClient {
         guard let payload = envelope.data else { throw BiliError.badResponse }
         return payload
     }
+
+    /// 跟 `decode` 一样，只是结果取的是顶层 `result`。
+    /// PGC 那一套接口（season、ep）不套 `data` 那一层，别的接口都套。
+    private func decodeResult<T: Decodable>(_ type: T.Type, from data: Data) throws -> T {
+        let envelope = try JSONDecoder().decode(ResultEnvelope<T>.self, from: data)
+        guard envelope.code == 0 else {
+            if envelope.code == -101 { throw BiliError.notLoggedIn }
+            throw BiliError.api(code: envelope.code, message: envelope.message ?? "请求失败（\(envelope.code)）")
+        }
+        guard let payload = envelope.result else { throw BiliError.badResponse }
+        return payload
+    }
 }
 
 // MARK: - 响应结构
@@ -515,6 +675,13 @@ private struct Envelope<T: Decodable>: Decodable {
     let code: Int
     let message: String?
     let data: T?
+}
+
+/// PGC 那一套用的信封：结果在顶层 `result` 里，不是 `data`。
+private struct ResultEnvelope<T: Decodable>: Decodable {
+    let code: Int
+    let message: String?
+    let result: T?
 }
 
 private struct NavProfileData: Decodable {
@@ -676,4 +843,85 @@ private struct FavResourceData: Decodable {
     }
     let medias: [Media]?
     let has_more: Bool
+}
+
+/// 追番 / 追剧列表。里面是**一季**，没有 bvid —— 分集另问（SeasonData）。
+private struct FollowListData: Decodable {
+    struct Season: Decodable {
+        struct NewEp: Decodable {
+            /// 「更新至第220话」
+            let index_show: String?
+        }
+        let season_id: Int
+        let title: String
+        let cover: String
+        /// 一共几集
+        let total_count: Int
+        let new_ep: NewEp?
+    }
+    let list: [Season]?
+    let total: Int?
+}
+
+/// 一季的分集。字段跟别的接口对不上，是 PGC 那一套自己的：
+/// `duration` 是**毫秒**，标题拼好的整句在 `show_title` 里。
+private struct SeasonData: Decodable {
+    struct Episode: Decodable {
+        let bvid: String
+        let title: String
+        let long_title: String?
+        let show_title: String?
+        let cover: String
+        /// 毫秒
+        let duration: Int
+    }
+    let episodes: [Episode]
+}
+
+/// 稍后再看。给的是完整的稿件对象：封面是 `pic`、UP 主在 `owner` 里、
+/// 分 P 数是 `videos` —— 跟收藏夹那边（cover / upper / page）不是一套写法。
+///
+/// 数字都写成可空：失效稿件的这几个字段是缺的，硬解会让**整页**解不出来
+///（一条坏的拖垮三十条），缺的按 0 算，后面反正会被 bvid 那道滤掉。
+private struct ToViewData: Decodable {
+    struct Entry: Decodable {
+        struct Owner: Decodable { let name: String }
+        let bvid: String?
+        let title: String
+        let pic: String?
+        /// 秒
+        let duration: Int?
+        /// 分 P 数量
+        let videos: Int?
+        let owner: Owner?
+    }
+    let count: Int?
+    let list: [Entry]?
+}
+
+/// 历史记录。条目里混着直播 / 专栏 / 番剧，只有 `history.bvid` 有值的是视频。
+/// 数字同样可空 —— 直播那几条就没有 `duration` / `videos`。
+private struct HistoryData: Decodable {
+    struct Cursor: Decodable {
+        let max: Int
+        let view_at: Int
+        let business: String
+    }
+    struct Entry: Decodable {
+        struct History: Decodable {
+            let bvid: String?
+        }
+        let title: String
+        let cover: String?
+        /// 秒
+        let duration: Int?
+        let videos: Int?
+        let author_name: String?
+        /// 上次看这条的时间，unix 秒
+        let view_at: Int?
+        let history: History?
+    }
+    /// 翻到头的时候这个也可能不给，所以可空 —— 缺了就把传进来的游标原样带回去
+    let cursor: Cursor?
+    let list: [Entry]?
 }
