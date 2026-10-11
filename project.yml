@@ -46,11 +46,15 @@ targets:
   # 反正它就是个纯逻辑模块，直接当普通 framework 建，产物就叫 BiliCore.framework。
   # 两个 framework 都是双平台的：同一份源码、同一份构建配置，
   # 由这个工程按各自 SDK 分别编出 iOS 版和 macOS 版。
+  #
+  # 源码原来跟着 SwiftPM 那套布局摆在 `BiliCore/Sources/BiliCore/`（包根在仓库
+  # 根上），包没了布局还留着 —— 跟另外三层对不上，clone 下来看着也莫名其妙。
+  # 现在跟 `Sources/BiliKit` 那些一样，一层：`Sources/BiliCore`。
   BiliCore:
     type: framework
     platform: [iOS, macOS]
     sources:
-      - path: BiliCore/Sources/BiliCore
+      - path: Sources/BiliCore
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.lihaoyun6.BiliDown.BiliCore
