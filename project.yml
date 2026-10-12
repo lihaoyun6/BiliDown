@@ -146,8 +146,33 @@ targets:
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         UILaunchScreen: {}
+        # **iPhone 上只给竖屏**（2026-10-12 定的）。
+        #
+        # 原来是竖 + 横左右，加横屏的理由只有一个：登录网页。横过来 web view
+        # 有 800pt 上下的宽度，B 站那个桌面版登录页才会把右栏（账号密码 / 短信 /
+        # 第三方）排出来。那个理由后来不成立了 —— 登录页现在钉成移动内容模式、
+        # 只留选中的那半页，宽度变了由页面自己盯着重排（见 `LoginSheet`
+        # 里 `preferredContentMode` 那两段）。而横屏的代价是整机所有页面
+        # 都能横过来，可这个 App 全是单列列表，除了登录那一页没有一处用得上。
+        #
+        # 上下颠倒也不给：那个方向没人用，系统自己也很少给。
+        # iPad 那份照旧四个方向全给 —— 跟分屏 / 侧拉那件事连着呢（见下）。
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
+        # iPad 上四个方向全给（包括上下颠倒：iPad 经常平放在桌上、插着
+        # 充电线翻过来用，系统自己也是按四个方向给的）。
+        #
+        # 这四个都写上还有个副作用，是**要的**：iPadOS 只在「四个方向都支持
+        # 且没有 UIRequiresFullScreen」时才让这个 App 进分屏 / 侧拉。
+        # 我们没设那个键，所以分屏、侧拉、Stage Manager 全都可用 ——
+        # 被拖成窄窗时落回的就是竖屏那套单列布局，不会散架。
+        #
+        # 只有 iPad 这份有四个方向，iPhone 那份只剩竖屏（见上面那个键）。
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
         NSPhotoLibraryAddUsageDescription: 用于把下载好的视频保存到你的相册。
         NSPhotoLibraryUsageDescription: 用于把下载好的视频保存到你的相册。
         ITSAppUsesNonExemptEncryption: false
@@ -165,7 +190,12 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.lihaoyun6.BiliDown
-        TARGETED_DEVICE_FAMILY: "1"
+        # "1,2" = iPhone + iPad。原来是 "1"（只有 iPhone），那样装到 iPad 上
+        # 会以**兼容模式**跑：屏幕中间一个手机比例的窗口，横竖都不跟着屏幕转。
+        #
+        # 这一行也是 iPad 分屏 / 侧拉 / Stage Manager 的前提之一 ——
+        # 声明成 iPhone 专属的 App，在 iPad 上连自由窗口都不给。
+        TARGETED_DEVICE_FAMILY: "1,2"
         # 图标是 Sources/BiliDown/Assets.xcassets 里那张 1024 的单尺寸图，
         # 其余尺寸由 asset catalog 自己缩
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon

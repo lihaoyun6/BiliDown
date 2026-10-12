@@ -43,10 +43,16 @@ struct VideoPickerView: View {
 
     var body: some View {
         content
-            // 收藏夹名 / 合集名放到列表顶上那行小字里，标题栏统一叫「选择视频」，
-            // 标题摆在顶栏中间（.inline）—— 跟原生那套一致，往上推也不会有大标题。
-            // 追番那四个没有上一层列表，名字就是这一页的，标题栏写自己的名字。
-            .navigationTitle(source.isStandalone ? source.title : "选择视频")
+            // 标题栏写这一页自己的名字：收藏夹名 / 合集名 / 番剧名 / 「稍后再看」…
+            // 不管从哪儿进来的都是这一套 —— 名字只有一个地方写。
+            //
+            // 原来收藏夹和合集那两页标题栏写的是「选择视频」，名字挂在下面
+            //「全选」那一行的右端。那是为了省掉一行表头，代价是「全选」那格
+            // 被名字占着，报不了已选多少个（见下面 SelectAllRow 那段）。
+            // 名字搬到标题栏就都齐了，也跟 mac 那边一模一样。
+            //
+            // 摆在顶栏中间（.inline）——跟原生那套一致，往上推也不会有大标题。
+            .navigationTitle(source.title)
             .navigationBarTitleDisplayMode(.inline)
             .searchable(
                 text: $query,
@@ -65,17 +71,24 @@ struct VideoPickerView: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button(downloadButtonTitle) { showingKindPicker = true }
                         .disabled(selectedCount == 0 || isCountingAll)
+                        // 弹窗挂在按钮上，不是挂在这一页上：iPad 上宽度够时
+                        // 这是个指着来源的**气泡**，挂在整页上会缩成一行高、
+                        // 里面的下载方式露不全（iPhone 一律从底部升起，不受影响）。
+                        .confirmationDialog("下载内容", isPresented: $showingKindPicker, titleVisibility: .visible) {
+                            ForEach(DownloadKind.allCases) { kind in
+                                Button(kind.displayName) { download(kind: kind) }
+                            }
+                            Button("取消", role: .cancel) {}
+                        }
                 }
             }
             .task { await loadFirstPage() }
+            // 收藏夹那几页的付费标记本来要在这儿补问一轮（见 `resolvePremiums`）——
+            // **已封存**，不调用。一页二十条就是二十个请求，换一枚标记不值，
+            // 而且这个接口（`fav/resource/list`）怎么都省不掉这一步
+            // （它的 media 对象一个付费字段都没有）。要重新打开，把下面这行加回来：
+            // .task(id: items.count) { await resolvePremiums() }
             .refreshable { await loadFirstPage() }
-            // 点下载之后先问下什么，再入队
-            .confirmationDialog("下载内容", isPresented: $showingKindPicker, titleVisibility: .visible) {
-                ForEach(DownloadKind.allCases) { kind in
-                    Button(kind.displayName) { download(kind: kind) }
-                }
-                Button("取消", role: .cancel) {}
-            }
             .sheet(item: $pagePickerItem) { item in
                 PagePickerSheet(target: ParsedTarget(ref: .bvid(item.bvid)), confirmVerb: "选择") { pages in
                     selection[item.bvid] = Set(pages)
@@ -134,8 +147,11 @@ struct VideoPickerView: View {
                 // 不套 Section 也不影响长相：insetGrouped 会把 List 顶层的行
                 // 归成一个隐式分组，照样是一张卡片，「全选」和下面的条目还是同一组。
                 //
-                // 收藏夹名 / 合集名挂在「全选」那行的右端，省掉一整行表头。
-                // 自己一页的那几个名字已经写在标题栏上了，这一格改成报已选数量。
+                // 「全选」那行的右端报**已选多少个**。这一格原来在收藏夹 / 合集
+                // 那两页放的是夹子名（名字当时在标题栏没处摆），于是那两页点开
+                // 之后看不到数目 —— 勾着勾着不知道勾了多少。名字搬去标题栏之后，
+                // 这一格四个来源统一报数，跟 mac 那边也一样。
+                //
                 // 选择框字号跟下面 FavItemRow 的对齐（那边是 .title3）。
                 //
                 // 稍后再看有这一行（一次给全，数目数得出来），历史记录没有
@@ -143,7 +159,7 @@ struct VideoPickerView: View {
                 if source.supportsSelectAll {
                     SelectAllRow(
                         state: allState,
-                        trailingText: source.isStandalone ? selectedCountText : source.title,
+                        trailingText: selectedCountText,
                         symbolFont: .title3
                     ) {
                         toggleAll()
@@ -236,8 +252,7 @@ struct VideoPickerView: View {
         return selectedCount == 0 ? "下载" : "下载 \(selectedCount) 个"
     }
 
-    /// 「全选」那一行右端那句话，给**自己一页**的那几个来源用
-    /// （收藏夹 / 合集那一格放的是夹子名，见上面 SelectAllRow 那段）。
+    /// 「全选」那一行右端那句话 —— 四个来源都用它，见上面 SelectAllRow 那段。
     /// 一个都没勾就空着 —— 「已选 0 个」是一句没有信息量的话。
     private var selectedCountText: String? {
         selectedCount == 0 ? nil : "已选 \(selectedCount) 个"
@@ -414,7 +429,8 @@ struct VideoPickerView: View {
                     coverURL: $0.coverURL,
                     duration: $0.duration,
                     upperName: collection.ownerName,
-                    pageCount: $0.pageCount
+                    pageCount: $0.pageCount,
+                    isPremium: $0.isPremium
                 )
             }
             return (items, result.hasMore)
@@ -423,6 +439,24 @@ struct VideoPickerView: View {
             // 一季的分集一次全给（几百集也是一次），没有下一页
             let episodes = try await queue.seasonEpisodes(seasonID: season.seasonID)
             return (episodes, false)
+
+        case .uploads(let mid, let ownerName):
+            // 投稿接口按发布时间倒序给（BiliClient.uploadsPage 里的 order=pubdate），
+            // 所以列表天然是新的在上、老的在下。一页 30 条。
+            // 行上的 UP 主名直接用手里这个 —— 三十行都去问一次主页是白花三十个请求。
+            let result = try await queue.bulkPage(.uploads(mid: mid), page: page)
+            let items = result.videos.map {
+                FavItem(
+                    bvid: $0.bvid,
+                    title: $0.title,
+                    coverURL: $0.coverURL,
+                    duration: $0.duration,
+                    upperName: ownerName,
+                    pageCount: $0.pageCount,
+                    isPremium: $0.isPremium
+                )
+            }
+            return (items, result.hasMore)
 
         case .watchLater:
             // 同理：B 站这个列表封顶 100 条，也是一次给全
@@ -477,6 +511,37 @@ struct VideoPickerView: View {
             hasMore = false
         }
     }
+
+    /// 把这一列里「还不知道要不要钱」的条目补上（`isPremium == nil`）。
+    /// **现在是封存状态，没人调用** —— 见 body 里 `.task { await loadFirstPage() }`
+    /// 下面那三行：收藏夹那个接口不报付费字段，补这一步只能一条一条问详情，
+    /// 一页二十条就是二十个请求（实测十来秒），当时决定不做。
+    ///
+    /// 代码留着，等哪天有更省流的路子（或者 B 站那个接口开始报付费字段了）
+    /// 直接接上就行：把那段注释里那行 `.task(id: items.count)` 加回来。
+    ///
+    /// 谁会是 nil：只有收藏夹那条路。补法是拿着 bvid 逐条问一次稿件详情，
+    /// **一条问完再问下一条**，理由写在 `BiliClient.premiumFlag(bvid:)` 里
+    /// （那儿的注释才是正文，这儿只说界面这一侧的两件事）：
+    ///
+    /// 一、**不占着列表**。二十条顺序问下来是十来秒，等齐了再显示，
+    /// 用户会以为 App 卡死了 —— 所以是列表先出来，标记随后一条条冒出来，
+    /// 问出一条就改一条。
+    ///
+    /// 二、**问不到的就一直不画**。`nil` 是「不知道」，不是「不要钱」，
+    /// 别顺手把它当成免费（标记不猜）。
+    private func resolvePremiums() async {
+        for bvid in items.filter({ $0.isPremium == nil }).map(\.bvid) {
+            // 翻页 / 搜索会重开一轮（见 body 上那个 `.task(id:)`），
+            // 被掐掉的这一轮就停在这儿，剩下的交给新一轮
+            if Task.isCancelled { return }
+            guard await queue.premiumFlag(bvid: bvid) == true else { continue }
+            // 这中间列表可能已经被换掉了，按 bvid 找回来再改
+            if let index = items.firstIndex(where: { $0.bvid == bvid }) {
+                items[index].isPremium = true
+            }
+        }
+    }
 }
 
 // MARK: - 收藏条目
@@ -510,8 +575,18 @@ private struct FavItemRow: View {
                     // 自己在里头居中，封面多高都跟着走。
                     .frame(height: Self.coverHeight, alignment: .center)
 
-                // 时长 / 总 P 数在封面右下角那个气泡里，跟添加任务那页一个规矩
-                CoverThumbnail.videoRow(url: item.coverURL, badge: coverBadge)
+                // 时长 / 总 P 数在封面右下角那个气泡里，跟添加任务那页一个规矩；
+                // 要钱的视频在左下角多一枚粉色标记。
+                //
+                // 收藏夹那几页给不出这个信息（`isPremium` 是 nil = 不知道），
+                // 补问那一步封存着（见 `resolvePremiums`），所以那几页不挂标记；
+                // 合集 / 投稿 / 稍后 / 历史 / 追番分集那几条路接口自己就报了。
+                // `== true` 就是在说「只认知道的，不知道的当没这回事」
+                CoverThumbnail.videoRow(
+                    url: item.coverURL,
+                    badge: coverBadge,
+                    isPremium: item.isPremium == true
+                )
 
                 // 三行字走共享的那一份（标题 / BV 号 / person + UP 主）——
                 // 跟添加任务那页解析出来的视频行、跟 mac 那边是同一套排法

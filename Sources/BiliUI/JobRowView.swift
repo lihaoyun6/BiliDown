@@ -53,12 +53,24 @@ public struct JobRowView: View {
     /// 见 `identifierLine` 那段：这不是行距，是「一句话里断开的两半」。
     private static let identifierGap: CGFloat = 10
 
+    /// 标题前面那枚「要钱」标记的直径，还有它跟标题之间空的距离。
+    ///
+    /// 12 比封面角标那枚（14）小一寸，因为这一行的尺子换成了标题的字高：
+    /// 14 摆在 13pt 的标题前面，那个圆比字还重，看着像个项目符号。
+    /// 由来见 `PremiumMark` 那段，那里还有闪电字号跟直径的比例。
+    private static let premiumMarkDiameter: CGFloat = 12
+    private static let premiumMarkGap: CGFloat = 5
+
     public var body: some View {
         HStack(alignment: .top, spacing: 12) {
             // 气泡（画质 / 「音频」/「封面」）由缩略图自己画，字从任务那边来
             // （见 `DownloadJob.coverBadge`）。
             // 尺寸走 `CoverThumbnail` 的默认值，也就是 `ListRowMetrics` 那一档 ——
             // 跟别的列表行同一把尺子。
+            //
+            // 「要钱」那枚标记**不在这儿**：队列这一行摆在标题前面（见 titleLine）。
+            // 别的列表（收藏夹 / 合集 / 解析结果）才是压在封面左下角 ——
+            // 那几页的封面大、行也松，压在角上正好。
             CoverThumbnail(
                 url: job.coverURL,
                 placeholderSystemImage: stateIcon,
@@ -66,11 +78,7 @@ public struct JobRowView: View {
             )
 
             VStack(alignment: .leading, spacing: 0) {
-                // 纯音频就不再另外挂个音符了 —— 封面角标上那个「音频」
-                // 说的是同一件事，一个信息摆两遍只会把标题挤短。
-                Text(job.displayTitle)
-                    .font(Typography.rowTitle)
-                    .lineLimit(1)
+                titleLine
 
                 Spacer(minLength: 0).frame(maxHeight: Self.titleGap)
                 // 中间这一档**永远占这么高、也永远有东西**（是条，或者是 BV 号）——
@@ -90,6 +98,30 @@ public struct JobRowView: View {
         // 行与行之间那点缝**归列表自己管**，这一行不另外垫 —— 垫了这一层，
         // 队列里两颗封面之间就比收藏夹那些视频行多出 4pt（上下各 2），
         // 一列扫下来能一眼看出队列更松。所有列表用的都是同一个 List 默认间距。
+    }
+
+    /// 标题那一行。
+    ///
+    /// 纯音频不另外挂个音符：封面角标上那个「音频」说的是同一件事，
+    /// 一个信息摆两遍只会把标题挤短。
+    ///
+    /// **要钱的那种在标题前面挂一枚粉标记**（`PremiumMark`）。这一行是队列里
+    /// 最该看清的一行 —— 别的地方（收藏夹 / 合集 / 解析结果）是压在封面左下角，
+    /// 可队列这一行的封面又小、两个角还都让给画质气泡了；何况这儿的信息
+    /// 是**确定**的：跟标题、封面同一次 `view` 拉回来的（见 `DownloadJob.isPremium`）。
+    ///
+    /// 拉回来才知道，所以拉到之前就是「先不画」—— 跟封面那个画质气泡
+    /// 要等取流是同一个道理。
+    private var titleLine: some View {
+        HStack(spacing: Self.premiumMarkGap) {
+            if job.isPremium == true {
+                PremiumMark(diameter: Self.premiumMarkDiameter)
+            }
+
+            Text(job.displayTitle)
+                .font(Typography.rowTitle)
+                .lineLimit(1)
+        }
     }
 
     /// 进度条占的那一档。

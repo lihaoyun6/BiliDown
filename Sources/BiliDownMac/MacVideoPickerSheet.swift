@@ -84,7 +84,9 @@ struct MacVideoPickerSheet: View {
                 url: video.coverURL,
                 width: 64,
                 height: 40,
-                badge: video.isMultiPage ? nil : durationText(video.duration)
+                badge: video.isMultiPage ? nil : durationText(video.duration),
+                // 这一档只认「确定要钱」的，nil（不知道）不画 —— 见 `BulkVideo.isPremium`
+                isPremium: video.isPremium == true
             )
 
             VStack(alignment: .leading, spacing: 2) {

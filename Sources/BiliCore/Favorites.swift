@@ -47,6 +47,14 @@ public struct FavItem: Sendable, Hashable, Identifiable {
     /// 第三行改摆「clock + 什么时候看的」（历史那一页上，什么时候看的比 BV 号
     /// 有用得多，而 UP 主比时间更该排在前面）—— 见 `VideoRowText`。
     public let playedAt: Date?
+    /// 付费 / 充电专属（判据见 `VideoInfo.isPremium`）。
+    ///
+    /// **nil = 不知道**，不是「不要钱」。现在只有收藏夹那条路
+    /// （`fav/resource/list`）会给出 nil —— 那个接口一个付费字段都不报。
+    /// 补问那一步（见 `BiliClient.premiumFlag(bvid:)`）**封存着**，
+    /// 所以收藏夹出来的这些一直是 nil、一直不挂标记；管子是留着的：
+    /// 要重新打开，界面补回来的值由这个 `var` 直接改在这一条上。
+    public var isPremium: Bool?
 
     public var id: String { bvid }
 
@@ -59,7 +67,8 @@ public struct FavItem: Sendable, Hashable, Identifiable {
         duration: Int,
         upperName: String,
         pageCount: Int = 1,
-        playedAt: Date? = nil
+        playedAt: Date? = nil,
+        isPremium: Bool? = nil
     ) {
         self.bvid = bvid
         self.title = title
@@ -68,6 +77,7 @@ public struct FavItem: Sendable, Hashable, Identifiable {
         self.upperName = upperName
         self.pageCount = max(pageCount, 1)
         self.playedAt = playedAt
+        self.isPremium = isPremium
     }
 
     /// 已失效（被删/被下架）的稿件。B 站有两种写法：

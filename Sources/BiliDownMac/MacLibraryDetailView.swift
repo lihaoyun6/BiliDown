@@ -78,6 +78,11 @@ struct MacLibraryDetailView: View {
                 }
             }
             .task { await loadFirstPage() }
+            // 收藏夹那几页的付费标记本来要在这儿补问一轮（见 `resolvePremiums`）——
+            // **已封存**，不调用。一页二十条就是二十个请求，换一枚标记不值，
+            // 而且这个接口（`fav/resource/list`）怎么都省不掉这一步
+            // （它的 media 对象一个付费字段都没有）。要重新打开，把下面这行加回来：
+            // .task(id: items.count) { await resolvePremiums() }
             .refreshable { await loadFirstPage() }
             .sheet(item: $pagePickerItem) { item in
                 MacPagePickerSheet(target: ParsedTarget(ref: .bvid(item.bvid)), confirmVerb: "选择") { pages in
@@ -396,7 +401,8 @@ struct MacLibraryDetailView: View {
                     coverURL: $0.coverURL,
                     duration: $0.duration,
                     upperName: collection.ownerName,
-                    pageCount: $0.pageCount
+                    pageCount: $0.pageCount,
+                    isPremium: $0.isPremium
                 )
             }
             return (items, result.hasMore)
@@ -405,6 +411,25 @@ struct MacLibraryDetailView: View {
             // 一季的分集一次全给（几百集也是一次），没有下一页
             let episodes = try await queue.seasonEpisodes(seasonID: season.seasonID)
             return (episodes, false)
+
+        case .uploads(let mid, let ownerName):
+            // 投稿这一档目前只有 iOS 造得出来（「我的关注」→ 分组 → 人 → TA 的投稿），
+            // mac 侧边栏没有这条路。这一支留着是因为 `LibrarySource` 是两端共用的，
+            // 少一支就编不过 —— 真接起来的时候（比如 mac 也加个关注栏目）行为已经在这儿了：
+            // 跟 iOS 一样，按发布时间倒序，一页 30 条。
+            let result = try await queue.bulkPage(.uploads(mid: mid), page: page)
+            let items = result.videos.map {
+                FavItem(
+                    bvid: $0.bvid,
+                    title: $0.title,
+                    coverURL: $0.coverURL,
+                    duration: $0.duration,
+                    upperName: ownerName,
+                    pageCount: $0.pageCount,
+                    isPremium: $0.isPremium
+                )
+            }
+            return (items, result.hasMore)
 
         case .watchLater:
             // 同理：B 站这个列表封顶 100 条，也是一次给全
@@ -481,6 +506,40 @@ struct MacLibraryDetailView: View {
             hasMore = false
         }
     }
+
+    /// 把这一列里「还不知道要不要钱」的条目补上（`isPremium == nil`）。
+    /// **现在是封存状态，没人调用** —— 见 body 里 `.task { await loadFirstPage() }`
+    /// 下面那三行：收藏夹那个接口不报付费字段，补这一步只能一条一条问详情，
+    /// 一页二十条就是二十个请求（实测十来秒），当时决定不做。
+    ///
+    /// 代码留着，等哪天有更省流的路子（或者 B 站那个接口开始报付费字段了）
+    /// 直接接上就行：把那段注释里那行 `.task(id: items.count)` 加回来。
+    ///
+    /// 谁会是 nil：只有收藏夹那条路。补法是拿着 bvid 逐条问一次稿件详情，
+    /// **一条问完再问下一条**，理由写在 `BiliClient.premiumFlag(bvid:)` 里
+    /// （那儿的注释才是正文，这儿只说界面这一侧的两件事）：
+    ///
+    /// 一、**不占着列表**。二十条顺序问下来是十来秒，等齐了再显示，
+    /// 用户会以为 App 卡死了 —— 所以是列表先出来，标记随后一条条冒出来，
+    /// 问出一条就改一条。
+    ///
+    /// 二、**问不到的就一直不画**。`nil` 是「不知道」，不是「不要钱」，
+    /// 别顺手把它当成免费（标记不猜）。
+    ///
+    /// 跟 iOS 那份是同一段（`VideoPickerView.resolvePremiums`）——
+    /// 两个端的列表本来就是各写一份的，改一个记得改另一个。
+    private func resolvePremiums() async {
+        for bvid in items.filter({ $0.isPremium == nil }).map(\.bvid) {
+            // 翻页 / 搜索会重开一轮（见 body 上那个 `.task(id:)`），
+            // 被掐掉的这一轮就停在这儿，剩下的交给新一轮
+            if Task.isCancelled { return }
+            guard await queue.premiumFlag(bvid: bvid) == true else { continue }
+            // 这中间列表可能已经被换掉了，按 bvid 找回来再改
+            if let index = items.firstIndex(where: { $0.bvid == bvid }) {
+                items[index].isPremium = true
+            }
+        }
+    }
 }
 
 // MARK: - 一个条目
@@ -515,8 +574,18 @@ private struct FavItemRow: View {
                     // 自己在里头居中，封面多高都跟着走。
                     .frame(height: Self.coverHeight, alignment: .center)
 
-                // 时长 / 总 P 数在封面右下角那个气泡里，跟添加任务那页一个规矩
-                CoverThumbnail.videoRow(url: item.coverURL, badge: coverBadge)
+                // 时长 / 总 P 数在封面右下角那个气泡里，跟添加任务那页一个规矩；
+                // 要钱的视频在左下角多一枚粉色标记。
+                //
+                // 收藏夹那几页给不出这个信息（`isPremium` 是 nil = 不知道），
+                // 补问那一步封存着（见 `resolvePremiums`），所以那几页不挂标记；
+                // 合集 / 投稿 / 稍后 / 历史 / 追番分集那几条路接口自己就报了。
+                // `== true` 就是在说「只认知道的，不知道的当没这回事」
+                CoverThumbnail.videoRow(
+                    url: item.coverURL,
+                    badge: coverBadge,
+                    isPremium: item.isPremium == true
+                )
 
                 // 三行字走共享的那一份（标题 / BV 号 / person + UP 主）——
                 // 跟添加任务那页解析出来的视频行、跟 iOS 那边是同一套排法

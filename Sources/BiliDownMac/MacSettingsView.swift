@@ -25,10 +25,9 @@ struct MacSettingsView: View {
             parseSection
             shortcutSection
             aboutSection
-            cacheSection
         }
         .formStyle(.grouped)
-        .navigationTitle("设置")
+        .navigationTitle(MacRootView.Section.settings.title)
         // 只提一句。数值照改不误 —— 这是个提醒，不是要用户再点一次头才生效。
         .alert("风险提示", isPresented: $confirmingParallel) {
             Button("好", role: .cancel) {}
@@ -268,84 +267,107 @@ struct MacSettingsView: View {
     /// 项目主页。「关于程序」那行点开的就是它。
     private static let repositoryURL = URL(string: "https://github.com/lihaoyun6/BiliDown")!
 
-    /// 界面上显示的那个地址：把 scheme 去掉。
-    /// 从 `repositoryURL` 上剥，不另写一份 —— 两个常量早晚会有一个忘了改。
-    private static var repositoryText: String {
-        repositoryURL.absoluteString.replacingOccurrences(of: "https://", with: "")
-    }
-
-    /// 版权那一行写的字。跟系统「关于 BiliDown」面板底下那句是同一个来源：
-    /// Info.plist 的 `NSHumanReadableCopyright`（键在 project.yml 里）——
-    /// 那个面板只认 plist，设置页这儿就照着读，不在代码里另抄一份。
-    private static var copyrightText: String {
-        Bundle.main.infoDictionary?["NSHumanReadableCopyright"] as? String ?? ""
-    }
-
+    /// 「关于程序」那一组：版本 + 项目主页，还有清理缓存。
+    ///
+    /// 版权和那句「B站视频下载工具」**不在这儿** —— 它们是「关于」的内容，
+    /// 归系统那个「关于 BiliDown」面板（见 `MacAppInfo`），摆进设置页只是
+    /// 把同一句话说第二遍。这一页留下的两行都是有「值」的：一个版本号、
+    /// 一份缓存占的地方，跟这一页别的设置行是同一种东西。
+    ///
+    /// 清理缓存原来被拎出去单独摆过（理由是「它跟版本没关系」），现在又合回来了：
+    /// 分开之后这一页末尾是两张卡片中间空一道，看着像下面还有一组没加载出来。
+    /// 跟 iOS 那份（`SettingsView.aboutSection`）是同一个摆法。
     private var aboutSection: some View {
         Section {
-            LabeledContent("版本信息", value: Bundle.main.versionText)
-
-            // 「源代码」是标题，地址是右边的值 —— 跟上面那行一个摆法。
-            // 别把地址拼进标题里：拼起来是一长条蓝字，看着不像一行设置。
+            // 标题写「BiliDown」，右边是**版本号 + GitHub 那颗猫连成的一串** ——
+            // 这一行整行都是通往项目主页的按钮（地址在 `repositoryURL`）：
+            // 点版本号、点图标、点中间那片空白，都是同一件事。
             //
-            // 地址不摆 "https://"：那是纯噪音，没人靠它判断这链接点不点得动。
-            // 点下去走的还是上面那条带 scheme 的完整 URL（见 repositoryText）。
+            // 原来标题写的是「版本信息」、值就是版本号，主页另起一行叫「源代码」。
+            // 合成一行之后，这一行自己说的就是「BiliDown 是哪个版本、代码在哪」。
             //
-            // 整行都是按钮（不只是那个地址）：一行里只有几个字能点，点偏一点
-            // 就没反应，是最容易让人以为「这个链接坏了」的一种摆法。
-            Button {
-                openURL(Self.repositoryURL)
-            } label: {
-                HStack {
-                    Text("源代码")
-                        .foregroundStyle(.primary)
-                    Spacer()
-                    Text(Self.repositoryText)
-                        .foregroundStyle(Color.accentColor)
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
+            // 颜色都不变：标题走主色，版本号还是次要色、图标还是次要色。
+            // 别把版本号刷成强调色 —— 蓝字是「这儿能点」的说法，可这一行的
+            // 落点不是版本号自己，是项目主页。样式得写 plain：默认那套会把
+            // 强调色刷满整个 label（见 `urlSchemeRow` 里那段）。
+            repositoryRow
 
-            // 版权。**值从 Info.plist 里读**（`NSHumanReadableCopyright`）——
-            // 系统那个「关于 BiliDown」面板底下显示的是同一句，键在 project.yml 里。
-            // 在这儿再写死一份的话，改了那处忘了这处，两边就开始不一样了。
-            LabeledContent("版权", value: Self.copyrightText)
+            // 清理缓存。原来自己一组，现在跟上面那行同一个卡片。
+            cacheRow
         } header: {
             Text("关于程序")
-        } footer: {
-            // 跟系统那个「关于 BiliDown」面板中间那行是同一句（见 `MacAppInfo`）。
-            // 摆脚注而不是当一行设置：它不是个「值」，是一句说明。
-            Text(MacAppInfo.tagline)
         }
         .task { cacheSize = CacheCleaner.totalSize() }
     }
 
-    /// 清理缓存。**自己一组，摆在整页最下面。**
-    ///
-    /// 原来它跟版本信息同属「关于程序」，但这两件事没关系：上面那组是
-    /// 「这是哪个版本、代码在哪」，这一行是「占了我多少地方、清掉」。
-    /// 分组标题只管上面那件事，所以这一行得拎出来单独摆 ——
-    /// 不要组标题：一个人一行的组，标题只会让人以为下面还有别的东西。
-    ///
-    /// 摆法：「缓存大小」是标题，多大是数据，动作在最右边 ——
-    /// 三样东西各归各位：标题靠左，数值和按钮一起靠右，按钮在最右。
-    /// 数值摆在按钮前面，跟上面「版本信息」那行的值落在同一片区域，
-    /// 一列扫下来是对齐的。
-    private var cacheSection: some View {
-        Section {
+    /// 「BiliDown ⋯⋯ 版本号 + GitHub」，整行点开项目主页。
+    private var repositoryRow: some View {
+        Button {
+            openURL(Self.repositoryURL)
+        } label: {
             HStack {
-                Text("缓存大小")
+                Text("BiliDown")
+                    .foregroundStyle(.primary)
+
                 Spacer()
+
+                // 版本号和图标之间空一点点：两样东西挨着摆，但**属于同一串**，
+                // 所以只空一点点（不是行尾那种值跟值的距离）。
+                HStack(spacing: 6) {
+                    Text(Bundle.main.versionText)
+                        .foregroundStyle(.secondary)
+
+                    // 图标比 iOS 那份小一号（14 对 18）：mac 的行里字本来就小一号
+                    // （`body` 是 13），跟版本号一模一样大的话，摆在那儿像个徽章。
+                    GitHubLogo(size: 14)
+                }
+            }
+            // 整行都是按钮（不只是右边那颗图标）：一行里只有一小块能点，点偏
+            // 一点就没反应，是最容易让人以为「这个链接坏了」的一种摆法。
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// 清理缓存。**这一行自己就是那个动作** —— 不再另摆一颗按钮：
+    /// 一行里既写「清理缓存」又摆一颗同样四个字的按钮，是把同一句话说两遍。
+    /// 标题改成动作之后，缓存多大就退到行尾当数据（跟上面版本号那个位置一样），
+    /// 点整行就清。
+    ///
+    /// 字刷成强调色：这一行是个动作，跟 iOS 那份一个样。
+    ///
+    /// 强调色刷在**整行**上，不是只刷标题那个 Text —— 行尾那个大小也得跟着走。
+    /// iOS 那边是默认按钮样式把强调色铺在 label 上，于是行尾那句 `.secondary`
+    /// 解析成「强调色的次要档」，出来的是一抹浅蓝；mac 这边 plain 样式没有
+    /// 那层强调色可继承，得自己铺上，`.secondary` 才解析得出同样的浅蓝。
+    /// 所以顺序是：先给整行 accent，行尾那句照旧写 `.secondary` ——
+    /// 别改成 `accent.opacity(0.5)`，那是照着结果描的，
+    /// 系统换一档次要色的深浅这边就跟不上了。
+    ///
+    /// 不能点的时候（正在清、或者本来就没缓存）交给 `.disabled` ——
+    /// 量过：plain 样式的按钮自己会把禁用态压暗（字和行尾那个数值一起），
+    /// 不用再叠一层 opacity 去装。
+    private var cacheRow: some View {
+        Button {
+            Task { await clearCache() }
+        } label: {
+            HStack {
+                Text("清理缓存")
+
+                Spacer()
+
+                // 末尾照旧报缓存多大 —— 清完这一行自己就变成「0 字节」，
+                // 那就是清干净了的凭证
                 Text(Self.sizeText(cacheSize))
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
-                Button("清理缓存") {
-                    Task { await clearCache() }
-                }
-                .disabled(isClearingCache || cacheSize == 0)
             }
+            .foregroundStyle(Color.accentColor)
+            // 空白那半截也得能点 —— 点「这一行」就该管用，不能只有字上管用
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
+        .disabled(isClearingCache || cacheSize == 0)
     }
 
     private func clearCache() async {

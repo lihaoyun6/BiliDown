@@ -27,7 +27,10 @@ struct MacDownloadsView: View {
     /// （那边为「滚动位置被重置」也是这么改的）。根不动，顶栏就不动。
     var body: some View {
         list
-            .navigationTitle("下载")
+            // 窗口标题跟侧边栏那一行**同名**（名字在 `MacRootView.Section.title`）。
+            // 原来这儿写的是老版本的「下载」—— 侧边栏挂着「下载管理」，
+            // 右边标题却是「下载」，同一件事在同一个屏幕上两个词。
+            .navigationTitle(MacRootView.Section.downloads.title)
             .toolbar { toolbarContent }
         // 确认框、提示、添加页那张 sheet 都在 MacRootView 上 ——
         // 它们是跟菜单栏共用的，得挂在哪个栏目都活着的视图上。
@@ -59,7 +62,12 @@ struct MacDownloadsView: View {
                             // 从头下一遍，停止的和失败的走的是同一条路。
                             Button("开始下载") { queue.retry(job) }
                         }
-                        if job.state.isActive {
+                        // 排队中的也算「能停」：`DownloadQueue.stop` 对排队中的就是
+                        // 直接标记成已停止（没什么可掐的），iOS 那边点一下排队中的
+                        // 行也是问「要停吗」。所以这儿不能只写 `isActive` ——
+                        // 那个不算 queued（这个文件里原来有一份把 queued 算进去的
+                        // 同名扩展，跟着侧边栏那次改动一起删了）。
+                        if job.state.isActive || job.state == .queued {
                             Button("停止") { queue.stop(job) }
                         }
                         Divider()
@@ -206,35 +214,46 @@ struct MacDownloadsView: View {
     /// 只画图标，不摞文字：文字会和系统给按钮画的那个方框压在一起，
     /// 而 mac 的顶栏本来就是靠图标认的。说不清的在 `.help` 里。
     ///
-    /// 图标一套**都是描边的**（`.circle`，不是 `.circle.fill`）：这副顶栏本来就
-    /// 是细线稿的路子，实心的圆摆进去一块块发沉。跟着也统一了大小和笔画的粗细 ——
-    /// 这几个符号同属一套，天然就一般大，不用再挑哪个单独调字号。
-    /// 只有 `tornado.circle`（清理列队）是另挑的：那个动作的「扫干净」比
-    /// `xmark.bin` 更贴。加号本来就没有实心版。
+    /// 图标：清空 / 清理那两颗和剪贴板那颗是**自己画的**（见 `drawnIcon`），
+    /// 其余走系统。
+    ///
+    /// 一套**不带圈**（`trash` 而不是 `trash.circle`）：外面那圈细线摆一排，
+    /// 看着像每颗按钮自己带的框，跟顶栏本来那些符号也不成套。加号本来就没有
+    /// 带圈的版本；`tornado`（清理列队）是另挑的：那个动作的「扫干净」比
+    /// `xmark.bin` 更贴。
+    ///
+    /// 开始和停止用**实心**那一版（`play.fill` / `stop.fill`）：这两颗是这一排里
+    /// 唯一「播放 / 停止」那种意思的，实心正是那套图形里认得出的写法；空心那两颗
+    /// 跟旁边的垃圾桶、龙卷风摆一起，细得像是没画满。
+    ///
+    /// 这几颗**不是一般大**，别按「同属一套就一样大」去推 —— 垃圾桶和龙卷风是
+    /// 这套里最高的两颗，系统画出来 16×18.25，比旁边的开始（12.25×14）冒出一大截，
+    /// 所以它俩才得自己画小一号（量出来的表在 `drawnIcon` 头上）。
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
         ToolbarItemGroup(placement: .primaryAction) {
-            toolbarButton("清空列队", systemImage: "trash.circle") {
-                actions.clearAll()
+            // 图标自己给（`trashIcon`），不写 `systemImage:` —— 它得小一号
+            toolbarButton("清空列队", action: { actions.clearAll() }) {
+                Self.trashIcon
             }
             .disabled(queue.jobs.isEmpty)
             .help("清除所有任务，包括尚未下载完的")
 
-            toolbarButton("清理列队", systemImage: "tornado.circle") {
-                actions.cleanFinished()
+            toolbarButton("清理列队", action: { actions.cleanFinished() }) {
+                Self.tornadoIcon
             }
             .disabled(!queue.hasFinished)
             .help("清理列队中已完成的任务")
 
             toolbarSeparator
 
-            toolbarButton("全部开始", systemImage: "play.circle") {
+            toolbarButton("全部开始", systemImage: "play.fill") {
                 actions.startAll(queue)
             }
             .disabled(!queue.hasResumable)
             .help("全部开始下载")
 
-            toolbarButton("全部停止", systemImage: "stop.circle") {
+            toolbarButton("全部停止", systemImage: "stop.fill") {
                 actions.stopAll()
             }
             .disabled(!queue.hasStoppable)
@@ -263,81 +282,100 @@ struct MacDownloadsView: View {
         }
     }
 
-    /// 「读取剪贴板」那颗图标。**自己画一张，比系统画的小一号。**
+    /// 自己画一颗顶栏图标。**顶栏里那颗符号多大，是顶栏自己定的** ——
+    /// 所以想改大小，就只能自己画一张递进去。
     ///
-    /// 为什么得自己画：顶栏 item 里那颗符号多大，是顶栏按自己那套样式定的 ——
     /// `Label` / `Image` 上写 `.font`、`.imageScale`、`.resizable` 递过去都会被
-    /// 盖掉，试过。而 `doc.*` 这一族文档符号的图形天生比旁边那几颗圈高一截：
-    /// 同样是顶栏那档点数，圈画出来墨迹 6.5×6.5，它是 6×8 —— 一条线摆下来，
-    /// 就它冒头。
+    /// 盖掉，试过：顶栏读的是它自己那套样式，不看我们写的字。
     ///
-    /// 10.5pt 是量出来的。同一把尺子（顶栏那档字号，墨迹按 1/4 pt 量）下：
+    /// 于是画法是这样：`Image(size:)` 造一张指定大小的图 → `context.resolve` 把
+    /// 一段 `Text(Image(systemName:))` 解析成能画的东西 → `measure(in:)` 量出墨迹
+    /// → `context.draw` 摆上去。文字是按 rect 左上角排的，不缩不放，**想居中得
+    /// 先量出来再自己算那块 rect**。
     ///
-    ///     旁边的圈（trash / play / stop / tornado）  墨迹 13.00×13.00
-    ///     doc.on.doc 不改                           墨迹 13×16     ← 高 3pt，就是它冒头的原因
-    ///     9.75pt                                    墨迹 10.25×12.25
-    ///     10pt                                      墨迹 10.25×12.75
-    ///     10.25pt                                   墨迹 10.75×12.75
-    ///     10.4 ~ 10.5pt                             墨迹 10.75×13.25
-    ///     10.6pt                                    墨迹 11.00×13.25
-    ///     10.7 ~ 10.75pt                            墨迹 11.25×13.50  ← 现在这版
-    ///     10.8 ~ 11pt                               墨迹 11.25×13.75  ← 比每一颗圈都高，冒头
+    /// 加粗走 `weight`，别动 `pointSize`：字重只让笔画变厚，外形几乎不动
+    /// （量过：regular 11.00×13.25 → semibold 11.25×13.50，只差 0.25pt，
+    /// 而调 `pointSize` 是整块跟着变）。三颗都走 semibold，笔画粗细才是一套。
     ///
-    /// **它得跟旁边那几颗圈一般高**，那是这颗按钮唯一的尺子：13.25 对 13.00 已经
-    /// 齐平；再往上 13.50 / 13.75，一排圈里就它上下各冒出去一点 —— 正是先前
-    /// 要修的那个毛病。所以大小上没有余地，只能贴着 13.00 这一档放。
-    ///
-    /// 档位是**跳的**，别按 0.1 去推：好几组点数（如 10.4 与 10.5、10.8 与 11）
-    /// 画出来一模一样。上面这张表是逐档量出来的，调之前先看它在哪一档。
-    ///
-    /// **画布必须比墨迹大得多，那一格靠 `.frame` 单独钉住。**
-    /// 一开始画布就是 15×15（跟圈那一格一样大），墨迹 13 高只留出 1pt 余量 ——
-    /// 顶栏一缩放就顶出去，上下被切了。现在画布 20×20，墨迹只占中间 13.25，
-    /// 四周各留 3.375pt：顶栏当它是 15（认 frame）就裁不到东西，当它是 20
-    /// （不认 frame）也还是有富余。两种脾气都不会切。
-    ///
-    /// 画布跟着放宽收紧都行，但**别让它贴边**。
-    ///
-    /// ### 那一下「一打开是大图标、切个栏目才变小」是怎么回事
+    /// ### 那句 `.environment(\.imageScale, .medium)` 不能少
     ///
     /// `Text` 里那颗符号的大小，除了 `.font` 还受**环境的 `.imageScale`** 管 ——
     /// 而这个环境是顶栏给的，不是我们给的。顶栏**第一遍**渲染时递过来的环境是
-    /// 「大号符号」那一档，画出来墨迹 14.5×15（旁边那几颗圈才 13，所以一眼看着
-    /// 就是「原来那个大图标」）；切一下栏目，item 被拆掉重建，第二遍环境是正常
-    /// 的，才变回 11.5×14。**画的点数一点没变，是环境在变。**
+    /// 「大号符号」那一档，画出来会大一圈（看着就是「一打开是大图标、切个栏目
+    /// 才变小」）；切一下栏目，item 被拆掉重建，第二遍环境正常，才变回我们要的
+    /// 大小。**画的点数一点没变，是环境在变。** 所以把它钉死在 `.medium`，
+    /// 哪一遍来画出来都一样。它得挨着 `Image` 那一层，不能被外面的环境压过去。
     ///
-    /// 所以下面 `.environment(\.imageScale, .medium)` 那句是必须的：把它钉死，
-    /// 画出来的就永远是同一张，顶栏哪一遍来都一样。去掉它这个毛病就回来。
+    /// ### 画布比墨迹大得多，报出去的那一格单独钉
     ///
-    /// ### 调大小就改下面这一个数
-    private static let clipboardPointSize: CGFloat = 12.5
-
-    private static var clipboardIcon: some View {
-        let box = CGSize(width: 20, height: 20)
-        return Image(size: box) { context in
-            // 加粗走 `weight`，别动 `size`：字重只让笔画变厚，外形几乎不动
-            // （量过：regular 11.00×13.25 / 墨量 869 → semibold 11.25×13.50 / 1123，
-            // 只差 0.25pt，而调 `size` 是整块跟着变）。
+    /// `box` 是画布，`.frame(width: 15, height: 15)` 是**报给顶栏占的那一格**：
+    /// 顶栏可能认 frame、也可能认图自己的大小（20 / 22 / 24 三种画布都试过，
+    /// 画出来一模一样），留足透明余量，两种脾气都裁不到东西。**别让墨迹贴边。**
+    ///
+    /// ### 大小是怎么定的（在**真顶栏**里量的，墨迹按 1/4 pt 量）
+    ///
+    ///     系统画的 trash                        16.00 × 18.25   ← 这一排里最高的两颗
+    ///     系统画的 tornado                      15.75 × 18.00
+    ///     系统画的 play.fill / stop.fill        12.25 × 14.00 / 13.50 × 13.50
+    ///     系统画的 plus                         13.50 × 13.50
+    ///     14pt 的 trash                        13.50 × 15.50   ← 现在这版
+    ///     14pt 的 tornado                      13.50 × 15.75   ← 现在这版
+    ///     12.5pt 的 doc.on.doc                 13.00 × 15.50   ← 剪贴板那颗
+    ///
+    /// 自己画的三颗都落在 15.5 那一档：一样高，摆一排是一个家族；比系统画的
+    /// 垃圾桶矮 2.5，离旁边的开始 / 停止也就一两个点，不再冒头。
+    /// 剪贴板的点数比垃圾桶那两颗**小**，画出来却一样大 —— 文档符号天生矮而宽，
+    /// 别看着点数不一样就把它调齐。
+    ///
+    /// 档位是**跳的**，别按 0.1 去推：好几组点数画出来一模一样（如 10.4 与 10.5）。
+    /// 调之前先在真顶栏里量一档，别照着这张表推。
+    private static func drawnIcon(
+        _ symbol: String,
+        pointSize: CGFloat,
+        weight: Font.Weight = .semibold,
+        box: CGFloat = 20
+    ) -> some View {
+        Image(size: CGSize(width: box, height: box)) { context in
             let text = context.resolve(
-                Text(Image(systemName: "doc.on.doc"))
-                    .font(.system(size: clipboardPointSize, weight: .semibold))
+                Text(Image(systemName: symbol)).font(.system(size: pointSize, weight: weight))
             )
-            // 文字按 rect 左上角排，不缩不放 —— 想居中得先量出来再自己算那块 rect
-            let measured = text.measure(in: CGSize(width: box.width * 4, height: box.height * 4))
+            let measured = text.measure(in: CGSize(width: box * 4, height: box * 4))
             context.draw(text, in: CGRect(
-                x: (box.width - measured.width) / 2,
-                y: (box.height - measured.height) / 2,
+                x: (box - measured.width) / 2,
+                y: (box - measured.height) / 2,
                 width: measured.width,
                 height: measured.height
             ))
         }
-        // **钉死符号那一档。** 缺了这句，「打开是大图标、切个栏目才变小」就回来 ——
-        // 原因见上面那段（顶栏第一遍递进来的 .imageScale 是大的）。
-        // 它得挨着 `Image` 里面那层，不能被外面的环境压过去。
         .environment(\.imageScale, .medium)
-        // 画布 20，这一格按 15 报给顶栏 —— 跟旁边那几颗圈占的地方一样大，
-        // 多出来的 5 是透明的余量（见上面那段）。
         .frame(width: 15, height: 15)
+    }
+
+    /// 「清空列队」那颗垃圾桶。**自己画，比系统画的小一号** ——
+    /// 系统画出来 16×18.25，是一排里最高的一颗（表在 `drawnIcon` 头上）。
+    /// 14pt 画出来 13.5×15.5，跟剪贴板那颗一样高。
+    private static var trashIcon: some View {
+        drawnIcon("trash", pointSize: 14)
+    }
+
+    /// 「清理列队」那颗龙卷风。跟垃圾桶同高（14pt 画出来 13.5×15.75），
+    /// 系统画的它同样是 15.75×18 那一档，理由见上面那颗。
+    private static var tornadoIcon: some View {
+        drawnIcon("tornado", pointSize: 14)
+    }
+
+    /// 「读取剪贴板」那颗。两张纸（`doc.on.doc`）：把剪贴板里的东西读进来，
+    /// 正是这个动作。
+    ///
+    /// 名字一律用老的 `doc*`，不用新的 `document*`：两套画出来一模一样
+    /// （逐像素比过，零差异），但 `document.on.document` 是 SF Symbols 6
+    /// 改名后重新登记的新名字，要 macOS 15.0；`doc.on.doc` 从 10.15 就有。
+    /// 下限是 13，所以写老的那个 —— 别看着名字旧就顺手改。
+    ///
+    /// 12.5pt 画出来 13×15.5，跟垃圾桶那两颗一样高（它的点数小是因为文档符号
+    /// 天生矮而宽，同样点数下比圆形符号占地方）。
+    private static var clipboardIcon: some View {
+        drawnIcon("doc.on.doc", pointSize: 12.5)
     }
 
     /// 两撮按钮之间那根竖线。
@@ -354,9 +392,9 @@ struct MacDownloadsView: View {
             .padding(.horizontal, 4)
     }
 
-    /// 图标由调用方给的那一版。只给「读取剪贴板」用 —— 它那颗得自己画（见
-    /// `clipboardIcon`）。其余五颗继续走下面那条，系统怎么画就怎么画，
-    /// 别为了统一把它们的渲染路子也换掉。
+    /// 图标由调用方给的那一版。给**自己画**的三颗用（清空 / 清理 / 剪贴板，
+    /// 见 `drawnIcon`）。其余三颗继续走下面那条：系统怎么画就怎么画，
+    /// 那三颗本来就不冒头，别为了统一把它们的渲染路子也换掉。
     private func toolbarButton<Icon: View>(
         _ title: String,
         action: @escaping () -> Void,

@@ -38,27 +38,6 @@ struct DownloadsView: View {
                 .sheet(item: $clipboardEntries) { clip in
                     AddTargetsSheet(initialEntries: clip.entries)
                 }
-                // 不要标题：这一句本身就是全部内容，上面再顶一行「清空列队」
-                // 只是把同一句话说两遍
-                .confirmationDialog("", isPresented: $showingClearAllConfirm, titleVisibility: .hidden) {
-                    Button("清空列队", role: .destructive) { clearAll() }
-                    Button("取消", role: .cancel) {}
-                } message: {
-                    Text("清除所有任务，包括尚未下载完的")
-                }
-                .confirmationDialog("", isPresented: $showingClearConfirm, titleVisibility: .hidden) {
-                    Button("清理列队", role: .destructive) { cleanFinished() }
-                    Button("取消", role: .cancel) {}
-                } message: {
-                    Text("清理列队中已完成的任务")
-                }
-                .confirmationDialog("停止全部任务", isPresented: $showingStopAllConfirm, titleVisibility: .visible) {
-                    Button("全部停止", role: .destructive) { stopAll() }
-                    Button("取消", role: .cancel) {}
-                } message: {
-                    // 跟单条停止一样，停下的任务进度会清零，下去之前先说一声
-                    Text("停止任务后下载进度将丢失")
-                }
                 .alert("下载失败", isPresented: failedAlertBinding) {
                     Button("好", role: .cancel) { failedJob = nil }
                     Button("复制报告") { copyReport() }
@@ -166,14 +145,32 @@ struct DownloadsView: View {
             // 现在宽度由图标自己说了算，多出来的宽度全进到图标之间，
             // 面板左右两端就收到图标边上来了。
             HStack(spacing: 0) {
+                // 三个确认框都挂在**自己那颗按钮**上，不是挂在这一页外面。
+                // iPad 宽度够时 `confirmationDialog` 是个指着来源的气泡，
+                // 挂在整页上来源就成了整页，气泡会缩成一行高、字都露不全
+                //（iPhone 一律从底部升起，跟来源是谁无关，所以那边一直没事）。
                 barButton("trash.circle.fill", label: "清空列队", tint: .red,
                           isEnabled: !queue.jobs.isEmpty) {
                     showingClearAllConfirm = true
+                }
+                // 不要标题：这一句本身就是全部内容，上面再顶一行「清空列队」
+                // 只是把同一句话说两遍
+                .confirmationDialog("", isPresented: $showingClearAllConfirm, titleVisibility: .hidden) {
+                    Button("清空列队", role: .destructive) { clearAll() }
+                    Button("取消", role: .cancel) {}
+                } message: {
+                    Text("清除所有任务，包括尚未下载完的")
                 }
                 Spacer(minLength: 10)
                 barButton("tornado.circle.fill", label: "清理列队",
                           isEnabled: queue.hasFinished) {
                     showingClearConfirm = true
+                }
+                .confirmationDialog("", isPresented: $showingClearConfirm, titleVisibility: .hidden) {
+                    Button("清理列队", role: .destructive) { cleanFinished() }
+                    Button("取消", role: .cancel) {}
+                } message: {
+                    Text("清理列队中已完成的任务")
                 }
                 Spacer(minLength: 10)
                 barButton("document.circle.fill", label: "读取剪贴板") {
@@ -192,6 +189,13 @@ struct DownloadsView: View {
                 barButton("stop.circle.fill", label: "全部停止",
                           isEnabled: queue.hasStoppable) {
                     showingStopAllConfirm = true
+                }
+                .confirmationDialog("停止全部任务", isPresented: $showingStopAllConfirm, titleVisibility: .visible) {
+                    Button("全部停止", role: .destructive) { stopAll() }
+                    Button("取消", role: .cancel) {}
+                } message: {
+                    // 跟单条停止一样，停下的任务进度会清零，下去之前先说一声
+                    Text("停止任务后下载进度将丢失")
                 }
             }
             // 两端的内边距：图标离面板边缘就靠它（另外每格自己还让出 11）。

@@ -254,6 +254,7 @@ struct AddTargetsSheet: View {
             ownerName: content.ownerName,
             identifier: content.identifier,
             badge: content.badge,
+            isPremium: content.isPremium,
             trailing: content.trailing,
             onPick: content.canPick ? {
                 editorFocused = false

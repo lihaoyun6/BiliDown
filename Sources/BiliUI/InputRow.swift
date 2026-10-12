@@ -33,6 +33,9 @@ public struct InputRow: View {
     /// 封面上那个气泡里的字（单 P 视频的时长、多 P 视频的总 P 数）。
     /// 头像那种没有封面，用不上。
     var badge: String?
+    /// 付费 / 充电专属：封面左下角挂枚粉色标记（见 `CoverThumbnail`）。
+    /// 整批来源那两条不是「一个视频」，一直是 false。
+    var isPremium: Bool = false
     /// 第三行**最右头**那句话（多 P 视频的「已选 3 P」）。
     var trailing: String?
     /// 有内容可挑才给按钮
@@ -47,6 +50,7 @@ public struct InputRow: View {
         ownerName: String? = nil,
         identifier: String,
         badge: String? = nil,
+        isPremium: Bool = false,
         trailing: String? = nil,
         onPick: (() -> Void)? = nil
     ) {
@@ -56,6 +60,7 @@ public struct InputRow: View {
         self.ownerName = ownerName
         self.identifier = identifier
         self.badge = badge
+        self.isPremium = isPremium
         self.trailing = trailing
         self.onPick = onPick
     }
@@ -110,7 +115,7 @@ public struct InputRow: View {
     private var thumbnailView: some View {
         switch thumbnail {
         case .cover(let url):
-            CoverThumbnail.videoRow(url: url, badge: badge)
+            CoverThumbnail.videoRow(url: url, badge: badge, isPremium: isPremium)
 
         case .avatar(let url):
             ZStack {

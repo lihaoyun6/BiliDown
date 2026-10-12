@@ -7,10 +7,7 @@ import BiliUI
 struct SettingsView: View {
 
     @EnvironmentObject private var settings: AppSettings
-    @EnvironmentObject private var account: AccountStore
     @Environment(\.openURL) private var openURL
-    @State private var isLoggingIn = false
-    @State private var confirmingLogout = false
     @State private var cacheSize: Int64 = 0
     @State private var isClearingCache = false
     @State private var confirmingParallel = false
@@ -19,27 +16,12 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
-                accountSection
                 downloadSection
                 parseSection
                 shortcutSection
                 aboutSection
-                cacheSection
             }
             .navigationTitle("设置")
-            .sheet(isPresented: $isLoggingIn) {
-                LoginSheet()
-            }
-            .confirmationDialog(
-                "要退出当前账号吗？",
-                isPresented: $confirmingLogout,
-                titleVisibility: .visible
-            ) {
-                Button("退出登录", role: .destructive) {
-                    Task { await account.logout() }
-                }
-                Button("取消", role: .cancel) {}
-            }
             // 只提一句。数值照改不误 —— 这是个提醒，不是要用户再点一次头才能生效。
             .alert("风险提示", isPresented: $confirmingParallel) {
                 Button("好", role: .cancel) {}
@@ -48,69 +30,6 @@ struct SettingsView: View {
             }
         }
         .hud($hud)
-    }
-
-    // MARK: - 账号
-
-    /// 账号区块里两行图标共用的列宽。
-    /// 不写成「图标 + 自动间距」是因为两个符号的宽度并不相等，
-    /// 各排各的，下面那行文字就会跟用户名错开一截。
-    private static let accountIconWidth: CGFloat = 24
-
-    private var accountSection: some View {
-        Section {
-            if account.isLoggedIn {
-                HStack(spacing: 8) {
-                    // 带勾的：这行是「已经登上了」，状态得写在图标上
-                    Image(systemName: "person.crop.circle.badge.checkmark")
-                        .frame(width: Self.accountIconWidth, alignment: .leading)
-                    Text(account.displayName)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                    Spacer()
-                    if let uid = account.credential?.userId, !uid.isEmpty {
-                        // 正常字号（不缩）：UID 是要抄下来、要跟人对的东西，
-                        // 缩成 footnote 比用户名还小一号，读起来得凑近
-                        Text("UID \(uid)")
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .foregroundStyle(.green)
-
-                // 退出登录也得带个人形图标（带叉的那个），跟上面那行是一对。
-                // 图标列宽跟上面钉的是同一个数，两行文字才齐 —— 这俩符号
-                // 宽度本来不一样（带 badge 的那个更宽），靠 Label 自己排会错开。
-                Button(role: .destructive) {
-                    confirmingLogout = true
-                } label: {
-                    HStack(spacing: 8) {
-                        // 非 fill 版，跟上面那个带勾的是一对（描边的配描边的）
-                        Image(systemName: "person.crop.circle.badge.xmark")
-                            .frame(width: Self.accountIconWidth, alignment: .leading)
-                        Text("退出登录")
-                    }
-                }
-            } else {
-                Button {
-                    isLoggingIn = true
-                } label: {
-                    Label("登录 B 站账号", systemImage: "person.crop.circle.badge.plus")
-                }
-                Text("登录后可下载高清视频")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
-
-            // 钥匙串存不住登录态时（自签 / 侧载换签名主体之后很常见）说一声。
-            // 不说的话，用户看到的只是「每次打开都要重登」，无从下手。
-            if let warning = account.keychainWarning {
-                Text(warning)
-                    .font(.footnote)
-                    .foregroundStyle(.orange)
-            }
-        } header: {
-            Text("账号登录")
-        }
     }
 
     // MARK: - 下载设置（存哪儿 + 编成什么）
@@ -285,67 +204,87 @@ struct SettingsView: View {
 
     // MARK: - 关于
 
+    /// 版本 + 项目主页，还有清理缓存 —— 这一页最下面就这两行，一个卡片装完。
+    ///
+    /// 清理缓存原来被拎出去单独摆过（理由是「它跟版本没关系」），现在又合回来了：
+    /// 分开之后这一页末尾是两张卡片中间空一道，看着像下面还有一组没加载出来。
+    /// 「关于程序」这个标题照旧管着整张卡。
     private var aboutSection: some View {
         Section {
-            LabeledContent("版本信息", value: Bundle.main.versionText)
+            // 标题写「BiliDown」，右边是**版本号 + GitHub 那颗猫连成的一串** ——
+            // 这一行整行都是通往项目主页的按钮（地址在 `repositoryURL`）：
+            // 点版本号、点图标、点中间那片空白，都是同一件事。
+            //
+            // 原来标题写的是「版本信息」、值就是版本号，主页另起一行叫「源代码」。
+            // 合成一行之后，这一行自己说的就是「BiliDown 是哪个版本、代码在哪」——
+            // 比两行各说一半清楚，也少占一行。
+            //
+            // 颜色都不变：标题走主色，版本号还是次要色、图标还是次要色。
+            // 别把版本号刷成强调色 —— 蓝字是「这儿能点」的说法，可这一行的
+            // 落点不是版本号自己，是项目主页。样式得写 plain：默认那套会把
+            // 强调色刷满整个 label（见上面 `urlSchemeRow` 里那段）。
+            repositoryRow
 
-            // 「源代码」是标题，地址是右边的值 —— 跟这一组其他几行一个摆法。
-            // 别把地址拼进标题里：拼起来是一长条蓝字，看着不像一行设置。
+            // 清理缓存。原来自己一组摆在这儿下面，现在跟上面那行同一个卡片。
             //
-            // 地址不摆 "https://"：那是纯噪音，没人靠它判断这链接点不点得动。
-            // 点下去走的还是上面那条带 scheme 的完整 URL（见 repositoryText）。
-            //
-            // 整行都是按钮（不只是那个地址）：一行里只有几个字能点，点偏一点
-            // 就没反应，是最容易让人以为「这个链接坏了」的一种摆法。
-            // 样式得写 plain —— 默认那套会把强调色刷满整个 label，
-            // 标题就不是主色了（见下面 urlSchemeRow 里那段）。
-            Button {
-                openURL(Self.repositoryURL)
-            } label: {
-                HStack {
-                    Text("源代码")
-                        .foregroundStyle(.primary)
-                    Spacer()
-                    Text(Self.repositoryText)
-                        .foregroundStyle(Color.accentColor)
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
+            // 这条就保持蓝色。默认的按钮样式会把强调色刷到标签上，
+            // 正是这儿想要的效果 —— 别学上面那条加 .buttonStyle(.plain)，
+            // 也别在 Text 上写 .foregroundStyle，压不住也没意义。
+            cacheRow
         } header: {
             Text("关于程序")
         }
         .task { cacheSize = CacheCleaner.totalSize() }
     }
 
-    /// 清理缓存。**自己一组，摆在整页最下面。**
-    ///
-    /// 原来它跟版本信息同属「关于程序」，但这两件事没关系：上面那组是
-    /// 「这是哪个版本、代码在哪」，这一行是「占了我多少地方、清掉」。
-    /// 分组标题只管上面那件事，所以这一行得拎出来单独摆 ——
-    /// 不要组标题：一个人一行的组，标题只会让人以为下面还有别的东西。
-    ///
-    /// 这条就保持蓝色。默认的按钮样式会把强调色刷到标签上，
-    /// 正是这儿想要的效果 —— 别学上面那条加 .buttonStyle(.plain)，
-    /// 也别在 Text 上写 .foregroundStyle，压不住也没意义。
-    private var cacheSection: some View {
-        Section {
-            Button {
-                Task { await clearCache() }
-            } label: {
-                HStack {
-                    Text("清理缓存")
-                    Spacer()
-                    if isClearingCache {
-                        ProgressView()
-                    } else if cacheSize > 0 {
-                        Text(Self.sizeText(cacheSize))
-                            .foregroundStyle(.secondary)
-                    }
+    /// 「BiliDown ⋯⋯ 版本号 + GitHub」，整行点开项目主页。
+    private var repositoryRow: some View {
+        Button {
+            openURL(Self.repositoryURL)
+        } label: {
+            HStack {
+                Text("BiliDown")
+                    .foregroundStyle(.primary)
+
+                Spacer()
+
+                // 版本号和图标之间空一点点：两样东西挨着摆，但**属于同一串**，
+                // 所以只空一点点（不是行尾那种值跟值的距离，见 `trailingIcon`）。
+                HStack(spacing: 6) {
+                    Text(Bundle.main.versionText)
+                        .foregroundStyle(.secondary)
+
+                    // 图标本身在 `GitHubLogo` 里 —— 认得的人一眼知道点了去哪儿，
+                    // 不认得的也看得出来这是个对外的链接；地址在按钮里，什么都没少。
+                    GitHubLogo()
                 }
             }
-            .disabled(isClearingCache)
+            // 整行都能点（不只是字和图标那一小块）：一行里只有一小块能点，
+            // 点偏一点就没反应，是最容易让人以为「这个链接坏了」的一种摆法。
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
+    }
+
+    /// 清理缓存。**这一行自己就是那个动作**，点整行就清，末尾照旧报缓存多大。
+    private var cacheRow: some View {
+        Button {
+            Task { await clearCache() }
+        } label: {
+            HStack {
+                Text("清理缓存")
+                Spacer()
+                if isClearingCache {
+                    ProgressView()
+                } else if cacheSize > 0 {
+                    Text(Self.sizeText(cacheSize))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            // 空白那半截也得能点 —— 点「这一行」就该管用，不能只有字上管用
+            .contentShape(Rectangle())
+        }
+        .disabled(isClearingCache)
     }
 
     private func clearCache() async {
@@ -374,12 +313,6 @@ struct SettingsView: View {
 
     /// 项目主页。「关于程序」那行点开的就是它。
     private static let repositoryURL = URL(string: "https://github.com/lihaoyun6/BiliDown")!
-
-    /// 界面上显示的那个地址：把 scheme 去掉。
-    /// 从 `repositoryURL` 上剥，不另写一份 —— 两个常量早晚会有一个忘了改。
-    private static var repositoryText: String {
-        repositoryURL.absoluteString.replacingOccurrences(of: "https://", with: "")
-    }
 
     /// 快捷指令里直接能用的前缀：后面接上链接就是一条完整的唤起 URL。
     /// 这段里面只有 scheme 是从 Info.plist 读的，剩下的是给人看的约定 ——
@@ -432,5 +365,4 @@ private extension Bundle {
 #Preview {
     SettingsView()
         .environmentObject(AppSettings())
-        .environmentObject(AccountStore())
 }

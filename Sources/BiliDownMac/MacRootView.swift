@@ -14,6 +14,7 @@ struct MacRootView: View {
 
     enum Section: Hashable {
         case downloads
+        case followings
         case favorites
         case collections
         case bangumi
@@ -22,12 +23,40 @@ struct MacRootView: View {
         case history
         case settings
 
+        /// 这一栏的名字。**侧边栏那一行和右边的窗口标题读的是同一个** ——
+        /// 改一处两处跟着走。
+        ///
+        /// 以前是各写一份：侧边栏挂着「下载管理」「我的收藏」「偏好设置」，
+        /// 右边那页标题还留着老版本的「下载」「收藏」「设置」。同一件事在
+        /// 同屏幕上写两样，看着就是没做完。名字收在这儿之后，
+        /// 页面那边写 `MacRootView.Section.favorites.title` 就够了。
+        ///
+        /// 「我的」这个前缀是 mac 这份自己的：这条栏上九个词彼此不挨着，
+        /// 省掉「我的」换不来什么，光秃秃的「收藏」「合集」读着像几个动词。
+        /// iOS 那几页是标签栏 / 「我的」里点进去的，标题就短一档，不受这儿管。
+        var title: String {
+            switch self {
+            case .downloads: return "下载管理"
+            case .followings: return "我的关注"
+            case .favorites: return "我的收藏"
+            case .collections: return "我的合集"
+            case .bangumi: return "我的追番"
+            case .drama: return "我的追剧"
+            // 「稍后再看」：B 站自己就叫这个，iOS 那份也只这么叫。
+            // 侧边栏原来写的是「稍后在看」，跟着这一趟一起正过来 ——
+            // 它跟右边那页标题本来就该是同一个词。
+            case .watchLater: return "稍后再看"
+            case .history: return "历史记录"
+            case .settings: return "偏好设置"
+            }
+        }
+
         /// 这一栏非登录不可（侧边栏上也就登录后才画得出来）。
         /// 用来处理「正站在这一栏上退出登录」—— 那几页没了内容，得退回下载去。
         var needsAccount: Bool {
             switch self {
             case .downloads, .settings: return false
-            case .favorites, .collections, .bangumi, .drama, .watchLater, .history: return true
+            case .followings, .favorites, .collections, .bangumi, .drama, .watchLater, .history: return true
             }
         }
     }
@@ -45,7 +74,12 @@ struct MacRootView: View {
     @EnvironmentObject private var actions: MacQueueActions
 
     private var section: Section { navigator.section }
-    @State private var isLoggingIn = false
+
+    /// 选好登录方式之后才开登录窗：有值就说明该弹窗了（`sheet(item:)`）。
+    /// 跟 iOS 那边同一个流程、同一个类型（见 `LoginMode`）。
+    @State private var loginMode: LoginMode?
+    /// 「二维码登录 / 账号登录」那个菜单开了没有。
+    @State private var choosingLoginMode = false
     @State private var confirmingLogout = false
 
     /// 侧边栏宽度。显隐归系统，宽度给个上下限，中间让用户自己拖。
@@ -67,7 +101,12 @@ struct MacRootView: View {
     /// 图标在这一列里居中，所以这个数比图标大多少，图标两边就各空多少。
     private static let iconWidth: CGFloat = 22
     /// 图标那一列和文字之间留多少。要它们再近一点就减这个数。
-    private static let sidebarRowIconTextGap: CGFloat = 4
+    ///
+    /// 原来是 4，看着图标和字挨得太紧，**加 2 点**到现在这个数（见图标那列
+    /// `iconWidth`：框是 22、图标 15，图标两边本身各空 3.5，所以字离图标本体
+    /// 其实有 3.5 + 6 ≈ 9.5）。再要宽就往 8 走，别一次跨太多 ——
+    /// 这一栏本来就窄，图标一飘出去那几个标题就看着散。
+    private static let sidebarRowIconTextGap: CGFloat = 6
     /// 侧边栏那几行自己摆的边距。以前这几笔是 `List` 给的（而且是在布局阶段
     /// 才补上的，见 `sidebarRows`），现在全是我们写死的常量。
     ///
@@ -110,6 +149,13 @@ struct MacRootView: View {
     private static let sidebarRowVerticalPadding: CGFloat = 9
     private static let sidebarRowSpacing: CGFloat = 2
     private static let sidebarRowTopInset: CGFloat = 8
+    /// 「有几个任务在下」那枚小红胶囊：数字的字号，还有胶囊最矮多高。
+    ///
+    /// 字号比侧边栏那几个名字小得多（11 对 15）：它是一枚角标，不是这一行的
+    /// 内容 —— 跟名字一样大的话，「下载管理」旁边就多出一个词来抢地方。
+    /// 16 是最矮高度：一位数的时候出来的就是个圆，两位数是条胶囊。
+    private static let activityPillFontSize: CGFloat = 11
+    private static let activityPillMinHeight: CGFloat = 16
     /// 侧边栏底下那行账号里的图标。比上面四个导航项的图标大一号 ——
     /// 这一行是「当前是谁」，跟导航项不是一类东西，尺寸上就该分得开。
     /// 图标大、文字小，是这一行的主次关系，不是「图标跟文字一样大」。
@@ -151,8 +197,20 @@ struct MacRootView: View {
                 }
                 present(MacLinkIntake.entries(from: link), quiet: false)
             }
-            .sheet(isPresented: $isLoggingIn) {
-                MacLoginSheet()
+            // 登录窗：`mode` 是用户在菜单里选的那一种，`item:` 天然保证
+            // "选完了"和"选的是哪种"是同一件事。
+            .sheet(item: $loginMode) { mode in
+                MacLoginSheet(mode: mode)
+            }
+            .confirmationDialog(
+                "选择登录方式",
+                isPresented: $choosingLoginMode,
+                titleVisibility: .visible
+            ) {
+                ForEach(LoginMode.allCases) { mode in
+                    Button(mode.title) { loginMode = mode }
+                }
+                Button("取消", role: .cancel) {}
             }
             // 添加页只有这一个出口：顶栏那排按钮里的加号、右键「读取剪贴板」、
             // 快捷指令带进来的链接，走的都是 `actions.addSheet`。
@@ -214,6 +272,10 @@ struct MacRootView: View {
     @ViewBuilder
     private var detailContent: some View {
         switch section {
+        case .followings:
+            // 关注是三级（分组 → 人 → TA 的投稿），里头那两个层次归它自己切，
+            // 所以这里只摆一个入口视图。
+            MacFollowingsView()
         case .favorites:
             MacLibraryList(kind: .favorites)
         case .collections:
@@ -299,22 +361,33 @@ struct MacRootView: View {
     ///
     /// 顺带：不给 List 挂 selection 那条规矩也一并作废了 —— 没有 List 可挂。
     private var sidebarRows: some View {
-        VStack(spacing: Self.sidebarRowSpacing) {
-            sidebarRow("下载", systemImage: "arrow.down.circle", tag: .downloads)
+        // 「有几个任务还没了结」—— 挂在「下载管理」那一行的右边（见下面那枚胶囊）。
+        // 口径跟 iOS 那个标签栏角标是同一个：读的都是 `DownloadQueue.inFlightCount`
+        //（排队中的也算，只数在跑的话「全部开始」之后角标会是 0）。
+        let activity = queue.inFlightCount
 
-            // 这六个都是自己账号里的东西，一起等登录。
-            // 追番那四个跟 iOS 的「更多」是同一批，图标也用同一批 ——
+        return VStack(spacing: Self.sidebarRowSpacing) {
+            // 名字归 `Section.title` 管，这儿只给图标 —— 图标是「这一栏长什么样」
+            // 的局部选择，名字得跟右边那页的标题是一个词，所以收在一处。
+            sidebarRow(.downloads, systemImage: "arrow.down.circle", activity: activity)
+
+            // 这一组都是自己账号里的东西，一起等登录。
+            // 追番那四个跟 iOS 的「我的」是同一批，图标也用同一批 ——
             // 两端各挑各的，同一件事在两个平台上会长成两个样子。
+            //
+            // 关注排在最前（紧挨着下载管理）：它跟下面那六个不是一回事 ——
+            // 那些点进去都是「一堆视频」，这个点进去是「一群人」，再往下才是视频。
             if account.isLoggedIn {
-                sidebarRow("收藏", systemImage: "star", tag: .favorites)
-                sidebarRow("合集", systemImage: "rectangle.stack", tag: .collections)
-                sidebarRow("追番", systemImage: "sparkles.tv", tag: .bangumi)
-                sidebarRow("追剧", systemImage: "film", tag: .drama)
-                sidebarRow("稍后", systemImage: "clock", tag: .watchLater)
-                sidebarRow("历史", systemImage: "clock.arrow.circlepath", tag: .history)
+                sidebarRow(.followings, systemImage: "person.2")
+                sidebarRow(.favorites, systemImage: "star")
+                sidebarRow(.collections, systemImage: "rectangle.stack")
+                sidebarRow(.bangumi, systemImage: "sparkles.tv")
+                sidebarRow(.drama, systemImage: "film")
+                sidebarRow(.watchLater, systemImage: "clock")
+                sidebarRow(.history, systemImage: "clock.arrow.circlepath")
             }
 
-            sidebarRow("设置", systemImage: "gearshape", tag: .settings)
+            sidebarRow(.settings, systemImage: "gearshape")
         }
         .padding(.horizontal, Self.sidebarRowInset)
         .padding(.top, Self.sidebarRowTopInset)
@@ -330,9 +403,12 @@ struct MacRootView: View {
     /// `sidebarSelectionFill`），图标一律强调色，文字一律标准色。
     /// 这三样系统那套凑不齐：它一律是强调色底 + 白字。
     ///
-    /// 图标**不跟选中走**：选中与否都是蓝的。侧边栏这几个图标是「这是哪一页」
+    /// 图标**不跟选中走**：选中与否都是那个蓝。侧边栏这几个图标是「这是哪一页」
     /// 的标识，不是状态，跟着选中变灰会让整条栏看着像忽明忽暗。
-    private func sidebarRow(_ title: String, systemImage: String, tag: Section) -> some View {
+    ///
+    /// `activity` 是「有几个任务在下」，只有「下载管理」那一行给（别的行是 0，
+    /// 也就不画）。摆在这一行的**行尾**，见下面那枚胶囊。
+    private func sidebarRow(_ tag: Section, systemImage: String, activity: Int = 0) -> some View {
         let isSelected = section == tag
 
         return Button {
@@ -346,9 +422,17 @@ struct MacRootView: View {
                     .foregroundStyle(Color.accentColor)
                     .frame(width: Self.iconWidth, alignment: .center)
 
-                Text(title)
+                Text(tag.title)
                     .font(.system(size: Self.sidebarRowFontSize))
                     .foregroundStyle(.primary)
+
+                if activity > 0 {
+                    // 这一行是「图标 + 名字」靠左，胶囊顶到行尾 —— 中间那片空
+                    // 由这个 Spacer 吃掉。不摆它的话胶囊会紧跟在名字后面，
+                    // 离名字忽远忽近（名字长就顶到边上、短就缩在中间）。
+                    Spacer(minLength: 8)
+                    activityPill(activity)
+                }
             }
             // 左右同一个数，文字那一列看着才不歪。这几个数是手摆出来的，
             // 跟系统那套无关 —— 以前那个是 List 自己给的边距，现在归我们管，看图调。
@@ -378,7 +462,30 @@ struct MacRootView: View {
         .noFocusRing()
     }
 
-    /// 侧边栏底下那一块：上面是队列概况（有任务才出现），下面是账号。
+    /// 「有几个任务在下」。红底白字一个纯数字 —— 跟 iOS 标签栏上系统画的那枚
+    /// 角标说的是同一件事，连样子都对齐（红胶囊、白字、只要数字）。
+    ///
+    /// 自己画而不是找系统要：mac 这儿不是标签栏，没有 `.badge` 可用，
+    /// 这一行是我们手摆的 Button。红用 `Color.red`（就是系统红），
+    /// 别调成暗红 —— 角标要的就是「一眼看见」。
+    private func activityPill(_ count: Int) -> some View {
+        Text("\(count)")
+            .font(.system(size: Self.activityPillFontSize, weight: .semibold))
+            .monospacedDigit()
+            .foregroundStyle(.white)
+            .padding(.horizontal, 5)
+            .frame(minWidth: Self.activityPillMinHeight, minHeight: Self.activityPillMinHeight)
+            .background(Color.red, in: Capsule())
+            // 旁白读这一行时得念出来这是什么 —— 不然那儿只有一个数字
+            .accessibilityLabel("\(count) 个任务进行中")
+    }
+
+    /// 侧边栏底下那一块：只有账号了。
+    ///
+    /// 队列概况（「N 个任务进行中」）原来摆在这上面，现在挂在「下载管理」那一行
+    /// 的右边（见 `activityPill`）—— 那句话说的是队列，而队列就是那一栏；
+    /// 摆在这儿还多一个毛病：它是**有任务才出现**的，一有任务账号那块就被顶着
+    /// 往下走一格，侧边栏底下会跳。
     ///
     /// **不给底色**。之前铺了一层 `.bar`，结果这一条被刷成一条比侧边栏更白的
     /// 横带，下半截跟上面明显不是一个色。这块本来就是贴在侧边栏材质上的，
@@ -388,29 +495,8 @@ struct MacRootView: View {
     /// 上面**不加分隔线** —— 这块跟侧边栏是同一片材质，横一道线把它切成
     /// 「两个区域」，而它本来就只是侧边栏的另一头。
     private var sidebarFooter: some View {
-        VStack(spacing: 0) {
-            queueSummary
-            accountRow
-        }
-        .padding(.bottom, 4)
-    }
-
-    @ViewBuilder
-    private var queueSummary: some View {
-        let active = queue.jobs.filter(\.state.isActive).count
-
-        if active > 0 {
-            HStack(spacing: 6) {
-                ProgressView()
-                    .controlSize(.small)
-                Text("\(active) 个任务进行中")
-                    .font(Typography.caption)
-                    .foregroundStyle(.secondary)
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, Self.accountInset)
-            .padding(.top, 8)
-        }
+        accountRow
+            .padding(.bottom, 4)
     }
 
     // MARK: - 账号
@@ -432,10 +518,14 @@ struct MacRootView: View {
             if account.isLoggedIn {
                 confirmingLogout = true
             } else {
-                isLoggingIn = true
+                // 先问走哪条路再开窗：登录页是左右两栏，选完只摆对应的那半页
+                //（见 `LoginMode`）。跟 iOS 那边同一个流程。
+                choosingLoginMode = true
             }
         } label: {
-            accountLabel(account.isLoggedIn ? account.displayName : "登录",
+            // 没登录时写全「登录解锁更多功能」，跟 iOS 的「我的」那一页一致：
+            // 那一行底下再没有别的东西了，得用它说清楚登进去是**多出东西**来的。
+            accountLabel(account.isLoggedIn ? account.displayName : "登录解锁更多功能",
                          showsAvatar: account.isLoggedIn)
         }
         .buttonStyle(.plain)
@@ -528,19 +618,6 @@ extension View {
             focusEffectDisabled()
         } else {
             focusable(false)
-        }
-    }
-}
-
-extension DownloadJob.State {
-    /// 「还在跑」的那几个状态。侧边栏那行概况要的就是这个数 ——
-    /// 停下的、下完的、失败的都不算，它们不会自己往前走了。
-    var isActive: Bool {
-        switch self {
-        case .queued, .resolving, .downloading, .remuxing, .saving:
-            return true
-        case .stopped, .finished, .failed:
-            return false
         }
     }
 }

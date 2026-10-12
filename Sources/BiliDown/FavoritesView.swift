@@ -3,7 +3,7 @@ import BiliCore
 import BiliKit
 import BiliUI
 
-/// 只有登录后才出现的第三个 Tab：按收藏夹分组，进去挑视频批量下载。
+/// 「我的」里最上面那个入口：按收藏夹分组，进去挑视频批量下载。
 struct FavoritesView: View {
 
     /// 那把锁的宽度得钉死。`lock.open` 比 `lock` 宽出一截
@@ -22,23 +22,25 @@ struct FavoritesView: View {
     @State private var query = ""
 
     var body: some View {
-        NavigationStack {
-            content
-                .navigationTitle("收藏")
-                // .always：搜索框常驻在标题底下，不跟着列表滚走 ——
-                // 它是这一页的入口，藏起来等于没有。
-                // 用系统这一个是图它能跟导航栏联动：往上推列表，大标题会缩成
-                // 小版本，搜索框也跟着走那套动画 —— 自己拿 VStack 摆一个搜索框
-                // 就把 List 从导航栏根视图的位置上挤下来了，大标题再也不缩。
-                // 宽度上跟列表卡片差的那几个点，认了。
-                .searchable(
-                    text: $query,
-                    placement: .navigationBarDrawer(displayMode: .always),
-                    prompt: "搜索收藏夹"
-                )
-                .task { await load() }
-                .refreshable { await load() }
-        }
+        // 这一页现在是**推入**的（从「我的」点进来），所以**不套 NavigationStack** ——
+        // 自己再套一层的话，顶上会叠出两条栏，返回按钮也出不来。
+        // 搜索框照旧是 `.navigationBarDrawer(displayMode: .always)`：
+        // 推入的页面一样认这个摆法，框还是常驻在标题底下、往上推列表时跟着大标题缩。
+        content
+            .navigationTitle("收藏")
+            // .always：搜索框常驻在标题底下，不跟着列表滚走 ——
+            // 它是这一页的入口，藏起来等于没有。
+            // 用系统这一个是图它能跟导航栏联动：往上推列表，大标题会缩成
+            // 小版本，搜索框也跟着走那套动画 —— 自己拿 VStack 摆一个搜索框
+            // 就把 List 从导航栏根视图的位置上挤下来了，大标题再也不缩。
+            // 宽度上跟列表卡片差的那几个点，认了。
+            .searchable(
+                text: $query,
+                placement: .navigationBarDrawer(displayMode: .always),
+                prompt: "搜索收藏夹"
+            )
+            .task { await load() }
+            .refreshable { await load() }
     }
 
     /// 收藏夹不多，一次就全拉回来了，所以这儿就地筛选即可

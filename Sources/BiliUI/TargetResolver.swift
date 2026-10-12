@@ -19,6 +19,9 @@ public struct InputRowContent {
     public let trailing: String?
     /// 封面上那个气泡里的字（单 P 视频的时长、多 P 视频的总 P 数）
     public let badge: String?
+    /// 付费 / 充电专属：封面左下角挂枚粉色标记（见 `CoverThumbnail`）。
+    /// 整批来源那两条不是「一个视频」，一直是 false。
+    public let isPremium: Bool
     /// 有内容可挑才给那个按钮（多 P 视频、拉到东西的整批来源）
     public let canPick: Bool
 }
@@ -147,6 +150,9 @@ public final class TargetResolver: ObservableObject {
                 identifier: info?.bvid ?? target.ref.key,
                 trailing: selectedPages,
                 badge: badge,
+                // 信息还没拉回来的时候是 false：标记只画「已经知道要钱」的，
+                // 拉回来之前先不画，免得闪一下
+                isPremium: info?.isPremium == true,
                 canPick: info?.isMultiPage == true
             )
 
@@ -168,6 +174,9 @@ public final class TargetResolver: ObservableObject {
                 // 要下多少」是这一行的全部信息量。
                 trailing: detail.isEmpty ? nil : detail,
                 badge: nil,
+                // 这一行不是「一个视频」：点开是一堆人 / 一堆视频，
+                // 「其中有一条要钱」不是这一行能说清的事，所以不挂标记
+                isPremium: false,
                 // 一条都没拉到就没什么可挑的
                 canPick: state?.videos.isEmpty == false
             )

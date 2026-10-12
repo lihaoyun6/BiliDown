@@ -77,13 +77,28 @@ public struct BulkVideo: Hashable, Sendable, Identifiable {
     public let duration: Int
     /// 这个视频有几 P。多 P 的要展开成多个任务
     public let pageCount: Int
+    /// 付费 / 充电专属（判据见 `VideoInfo.isPremium`）。
+    ///
+    /// **nil = 不知道**，不是「不要钱」：投稿、合集、追番这几条路都报，
+    /// 但 `collectedItems` 认不出「订阅的是收藏夹」时会落到收藏夹接口上，
+    /// 那边一个付费字段都没有，出来的就是 nil（见 `FavItem.isPremium`）。
+    /// 补问那一步封存着，所以这种 nil 现在没人管，界面上就是不挂标记。
+    public let isPremium: Bool?
 
-    public init(bvid: String, title: String, coverURL: URL?, duration: Int, pageCount: Int) {
+    public init(
+        bvid: String,
+        title: String,
+        coverURL: URL?,
+        duration: Int,
+        pageCount: Int,
+        isPremium: Bool? = nil
+    ) {
         self.bvid = bvid
         self.title = title
         self.coverURL = coverURL
         self.duration = duration
         self.pageCount = pageCount
+        self.isPremium = isPremium
     }
 
     public var id: String { bvid }

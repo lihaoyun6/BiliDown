@@ -1,10 +1,16 @@
 import SwiftUI
 import BiliKit
+import BiliUI
 import WebKit
 
 /// 内嵌 B 站官方登录页。账号密码只进 B 站自己的表单，App 不碰。
 /// 跟 iOS 版是同一个做法，只是 WKWebView 换成了 NSViewRepresentable。
+///
+/// 进来之前用户已经在菜单里挑好了 `mode`（扫码 / 账号），这一页只把对应的
+/// 那半页摆出来 —— 另一半由 `LoginPageStyle` 在网页里藏掉。
 struct MacLoginSheet: View {
+
+    let mode: LoginMode
 
     @EnvironmentObject private var account: AccountStore
     @Environment(\.dismiss) private var dismiss
@@ -14,7 +20,7 @@ struct MacLoginSheet: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            MacLoginWebView { credential in
+            MacLoginWebView(mode: mode) { credential in
                 account.save(credential)
                 dismiss()
             }
@@ -47,7 +53,22 @@ struct MacLoginSheet: View {
             }
             .padding(12)
         }
-        .frame(minWidth: 520, minHeight: 620)
+        // 600 × 430。这两个数是**量出来的**，不是估的。
+        //
+        // 宽度：控件本体 386（扫码）/ 402（账号），居中由 `LoginPageStyle` 现算
+        // —— 它把 `#app` 收到控件宽、再给一个 (窗口宽 - 控件宽) / 2 的左边距，
+        // 页面跟着一起重排。所以**窗口多宽控件都在正中间**，这个宽度本身不再是
+        // "够不够装下"的问题。600 是按观感定的：两侧各让出约 100（量出来
+        // 99 / 107），两边对称。
+        //
+        // 高度：控件量出来是 y=40…340（扫码）/ 318（账号）—— 卡片自带的那 20
+        // 顶留白被归零之后是从 10 起，再加上上面给的 30 定留白（见调用处的
+        // `appTopMargin`）。底下再留一截，网页那部分给 385；加上最下面那排
+        // 按钮的 45，就是 430。文档高度正好 385，不会滚。
+        //
+        // 窗口窄到比控件本体还窄（比如 386 以下）时会两边各切一点，那是控件
+        // 本身就装不下，没别的办法 —— 排版本身已经不会横向溢出了。
+        .frame(minWidth: 600, minHeight: 430)
     }
 
     private func checkNow() {
@@ -68,6 +89,7 @@ struct MacLoginSheet: View {
 /// 登录成功后 B 站会跳转，这时就能直接拿到底。
 private struct MacLoginWebView: NSViewRepresentable {
 
+    let mode: LoginMode
     let onCredential: (BiliCredential) -> Void
 
     func makeCoordinator() -> Coordinator {
@@ -77,8 +99,18 @@ private struct MacLoginWebView: NSViewRepresentable {
     func makeNSView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .default()
+        // 登录页那点样式调整，跟 iOS 那份是同一段脚本 —— 见 `LoginPageStyle`。
+        // 两处跟 iOS 不一样：
+        //   · "输入框字号抬到 16px"这里不要 —— mac 上点输入框不会自动放大；
+        //   · 网页顶上留 30px —— 这扇窗的网页上面**没有标题栏**，不留的话
+        //     控件贴着窗口上沿（iOS 那头顶着导航栏，不用再留）。
+        configuration.userContentController.addUserScript(
+            LoginPageStyle.userScript(for: mode, raisesInputFont: false, appTopMargin: 30))
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
+        // 内容不满一屏时底下那条是 webView 自己在涂，默认那个灰跟页面 body
+        // 一个色 —— 钉成白的，见 `pinContentBackgroundToWhite`
+        webView.pinContentBackgroundToWhite()
         webView.navigationDelegate = context.coordinator
         webView.allowsBackForwardNavigationGestures = true
         // 桌面 UA 本来就是 mac 的原生身份，不用像 iOS 那样假装
@@ -87,6 +119,7 @@ private struct MacLoginWebView: NSViewRepresentable {
     }
 
     func updateNSView(_ webView: WKWebView, context: Context) {}
+
 
     final class Coordinator: NSObject, WKNavigationDelegate {
 

@@ -48,6 +48,9 @@ public actor BiliClient {
     private let session: URLSession
     private var credential: BiliCredential?
     private var cachedWBIKeys: WBIKeys?
+    /// 「这条稿件要不要钱」问过的答案（见 `premiumFlag(bvid:)`）。
+    /// **只有收藏夹那条路要用它** —— 而那条路现在封存着，所以这儿一直是空的。
+    private var cachedPremiumFlags: [String: Bool] = [:]
 
     public init() {
         let configuration = URLSessionConfiguration.ephemeral
@@ -118,7 +121,9 @@ public actor BiliClient {
             ownerName: payload.owner.name,
             pages: payload.pages.map {
                 VideoPage(cid: $0.cid, page: $0.page, title: $0.part, duration: $0.duration)
-            }
+            },
+            // 充电专属 / 付费合集 / PGC 付费 / UGC 付费 —— 四种说法归一个答案
+            isPremium: payload.isPremium
         )
     }
 
@@ -177,10 +182,46 @@ public actor BiliClient {
                 coverURL: Self.secureURL(media.cover),
                 duration: media.duration,
                 upperName: media.upper?.name ?? "",
-                pageCount: media.page ?? 1
+                pageCount: media.page ?? 1,
+                // 付费 / 充电：这个接口的 media 对象里一个相关字段都没有
+                // （文档里那几十个字段全翻过一遍），只有 attr 管「失效没失效」。
+                // 所以这一条是 **nil = 不知道**，标记由界面在这一页显示出来之后
+                // 逐条问回来（见 `premiumFlag(bvid:)`）—— 二十条挨着问要十来秒，
+                // 不能让整页等在那儿。
+                isPremium: nil
             )
         }
         return (items, payload.has_more)
+    }
+
+    /// 问一条稿件要不要钱 —— **只有收藏夹那几页该调它**（见上面 `favoriteItems`）。
+    ///
+    /// # 现在没人调用（封存中，2026-10-12）
+    /// 这条路子本身是通的，就是不划算：收藏夹那个接口一个付费字段都不给，
+    /// 想要那枚标记就只能一条一条问详情，省不掉。界面那一侧（两个端各一份
+    /// `resolvePremiums`）留着没删，要重新打开就在那儿把 `.task(id: items.count)`
+    /// 加回来。
+    ///
+    /// ## 为什么是一条一条问，而且循环写在界面里
+    /// 收藏夹这个接口一个付费字段都不给，标记只能拿着 bvid 逐条去问
+    /// `x/web-interface/view`（解析结果、队列预取一直在用的那个接口）。
+    /// 实测二十条顺序问下来 **10.9 秒**（`curl` 量的，App 里连接是热的会快些，
+    /// 但也是好几秒）—— 所以不能攒齐了再显示：列表先出来，标记一条条补上。
+    /// 循环摆在界面里（`VideoPickerView` / `MacLibraryDetailView`），
+    /// 就是为了能问出一条改一条。
+    ///
+    /// ## 绝不并发
+    /// 这个 App 在收藏夹上吃过一次风控的亏（见 `favoriteFolders`：并发打收藏夹
+    /// 接口，出口 IP 整个进了黑名单）。风控算的是请求量的账，一条一条来最稳。
+    /// 问过的记在 `cachedPremiumFlags` 里，翻回去、重开同一个夹子都不再问。
+    ///
+    /// 问不到（断网、被拦）返回 nil，调用方**当没有这回事** ——
+    /// 「问不到」和「不要钱」是两件事，混了就是给正常视频挂个要钱的牌子。
+    public func premiumFlag(bvid: String) async -> Bool? {
+        if let cached = cachedPremiumFlags[bvid] { return cached }
+        guard let info = try? await videoInfo(ref: .bvid(bvid)) else { return nil }
+        cachedPremiumFlags[bvid] = info.isPremium
+        return info.isPremium
     }
 
     // MARK: - UP 主投稿 / 合集
@@ -218,7 +259,8 @@ public actor BiliClient {
                 coverURL: Self.secureURL($0.pic),
                 duration: Self.seconds(fromLength: $0.length),
                 // 投稿列表不带分 P 数，多 P 的在入队展开时才知道
-                pageCount: 1
+                pageCount: 1,
+                isPremium: $0.isPremium
             )
         }
         let total = payload.page?.count ?? videos.count
@@ -269,7 +311,8 @@ public actor BiliClient {
                 coverURL: Self.secureURL($0.pic),
                 // 合集接口直接给秒数，和投稿那边的 "12:34" 不一样
                 duration: $0.duration,
-                pageCount: 1
+                pageCount: 1,
+                isPremium: $0.isPremium
             )
         }
         let total = payload.meta?.total ?? payload.page?.total ?? videos.count
@@ -333,7 +376,11 @@ public actor BiliClient {
                     title: $0.title,
                     coverURL: $0.coverURL,
                     duration: $0.duration,
-                    pageCount: $0.pageCount
+                    pageCount: $0.pageCount,
+                    // 收藏夹接口不给付费信息，照搬的会是 nil（不知道）——
+                    // 界面看见 nil 会自己去补问（见 `premiumFlag(bvid:)`），
+                    // 所以「订阅列表里点进来的收藏夹」那一页也照样有标记
+                    isPremium: $0.isPremium
                 )
             },
             total: fav.hasMore ? page * 20 + 1 : (page - 1) * 20 + fav.items.count,
@@ -413,7 +460,9 @@ public actor BiliClient {
                 // 分集这一页不报 UP 主：一季的投稿人就是版权方，
                 // 每一行都挂同一个名字没有意义
                 upperName: "",
-                pageCount: 1
+                pageCount: 1,
+                // 分集角标：付费那几集写「会员」/「付费」，免费的是空串
+                isPremium: $0.isPremium
             )
         }
     }
@@ -444,7 +493,9 @@ public actor BiliClient {
                 coverURL: Self.secureURL(entry.pic ?? ""),
                 duration: entry.duration ?? 0,
                 upperName: entry.owner?.name ?? "",
-                pageCount: entry.videos ?? 1
+                pageCount: entry.videos ?? 1,
+                // 完整稿件对象，带 rights
+                isPremium: entry.isPremium
             )
         }
         return (items, payload.count ?? items.count)
@@ -481,7 +532,9 @@ public actor BiliClient {
                 duration: entry.duration ?? 0,
                 upperName: entry.author_name ?? "",
                 pageCount: entry.videos ?? 1,
-                playedAt: entry.view_at.map { Date(timeIntervalSince1970: TimeInterval($0)) }
+                playedAt: entry.view_at.map { Date(timeIntervalSince1970: TimeInterval($0)) },
+                // 同样带 rights
+                isPremium: entry.isPremium
             )
         }
 
@@ -491,6 +544,91 @@ public actor BiliClient {
         // 判空用**原始**那一条：整页都是直播 / 专栏的时候 items 是空的，
         // 但记录还没翻完，不能就此停住
         return (items, !raw.isEmpty, next)
+    }
+
+    // MARK: - 我的关注
+
+    /// 我的关注分组，带 B 站自己那两条（`-10` 特别关注、`0` 默认分组）。
+    ///
+    /// 这个接口不查 WBI 签名，Cookie 带上就行。没登录回 -101。
+    public func followGroups() async throws -> [FollowGroup] {
+        let data = try await get(URL(string: "https://api.bilibili.com/x/relation/tags")!)
+        let payload = try decode([RelationTagData].self, from: data)
+
+        return payload.map {
+            FollowGroup(tagID: $0.tagid, name: $0.name, count: $0.count)
+        }
+    }
+
+    /// 某个分组里的人。一页 20 条。
+    ///
+    /// `order_type` 不传 = 按关注先后排，跟 B 站网页上那个默认一样；
+    /// 传 `attention` 会改成「最常访问」—— 那是另一套排法，这儿不掺和。
+    ///
+    /// 这个接口也不查签名。分组不存在回 22104，被 decode 抛成 `BiliError.api`。
+    public func followGroupMembers(tagID: Int, page: Int = 1) async throws -> (items: [FollowedUser], hasMore: Bool) {
+        let perPage = 20
+        var components = URLComponents(string: "https://api.bilibili.com/x/relation/tag")!
+        components.queryItems = [
+            URLQueryItem(name: "tagid", value: String(tagID)),
+            URLQueryItem(name: "pn", value: String(page)),
+            URLQueryItem(name: "ps", value: String(perPage))
+        ]
+
+        let data = try await get(components.url!)
+        let payload = try decode([RelationMemberData].self, from: data)
+
+        let items = payload.map(Self.followedUser)
+        // 这一页给满了就当作还有下一页。分组自己报的 count 不用来判，
+        // 那个数是上次统计时的快照，未必跟得上刚刚改过的分组。
+        return (items, items.count >= perPage)
+    }
+
+    /// **全部关注**：所有关注的人，不管分在哪个组里。一页 20 条。
+    ///
+    /// 跟上面那个按组拉的是**两个接口**：这个要 `vmid`（自己那个 uid，跟收藏夹、
+    /// 订阅合集一样从凭证里拿），那个要 `tagid`。所以「全部关注」在接口这一层
+    /// 就不是一个分组，界面上也是单列一项，不混进分组那个数组
+    ///（见 `FollowScope`）。
+    ///
+    /// `order_type` 同样不传 —— 不传就是按关注先后排，跟 B 站网页上默认那个一致。
+    ///
+    /// 多带一个 `total` 回去：顶上「全部关注」那一行右边要报个人数，这个数是
+    /// 接口给的，不用自己算，也不像分组那个 count 是快照。
+    public func followedUsers(page: Int = 1) async throws -> (items: [FollowedUser], total: Int, hasMore: Bool) {
+        guard let credential, !credential.userId.isEmpty else { throw BiliError.notLoggedIn }
+
+        let perPage = 20
+        var components = URLComponents(string: "https://api.bilibili.com/x/relation/followings")!
+        components.queryItems = [
+            URLQueryItem(name: "vmid", value: credential.userId),
+            URLQueryItem(name: "pn", value: String(page)),
+            URLQueryItem(name: "ps", value: String(perPage))
+        ]
+
+        let data = try await get(components.url!)
+        let payload = try decode(RelationFollowingsData.self, from: data)
+
+        let items = payload.list.map(Self.followedUser)
+        // 有 total 就按它判（准）；万一这次没给，退回「这一页满了还有下一页」
+        //（跟 `followGroupMembers` 一个判法）。
+        guard let total = payload.total, total > 0 else {
+            return (items, items.count, items.count >= perPage)
+        }
+        return (items, total, page * perPage < total)
+    }
+
+    /// 两条关注接口回来的人是同一个形状（`mid / uname / face / sign`），
+    /// 走这一个，免得同一个映射写两遍、改一处忘一处。
+    private static func followedUser(_ raw: RelationMemberData) -> FollowedUser {
+        FollowedUser(
+            mid: raw.mid,
+            name: raw.uname,
+            // 头像是 `//i0.hdslb.com/...` 这种协议相对写法（跟封面一样），
+            // 交给 secureURL 补全；没设头像的那几个是空串，出来就是 nil
+            avatarURL: raw.face.flatMap(Self.secureURL),
+            sign: raw.sign ?? ""
+        )
     }
 
     // MARK: - 取流
@@ -709,6 +847,20 @@ private struct NavData: Decodable {
     let wbi_img: WBI
 }
 
+/// 「这条稿件要不要钱」。稍后再看和历史记录给的是**完整的稿件对象**，
+/// 所以这三个接口共用这一个 `rights` 对象。
+///
+/// 两个字段都写成可空：`rights` 本身可能整块不来（失效稿件就会缺几块），
+/// 缺的那半按 0 算 —— 一条字段不全的条目不该把整页解崩。
+private struct ArchiveRights: Decodable {
+    /// PGC 付费（番剧 / 影视那种「付费」）
+    let pay: Int?
+    /// UGC 付费。**充电专属也算在这一档** —— 它没有单独一个 rights 字段
+    let ugc_pay: Int?
+
+    var isPaid: Bool { (pay ?? 0) != 0 || (ugc_pay ?? 0) != 0 }
+}
+
 private struct ViewData: Decodable {
     struct Owner: Decodable { let name: String }
     struct Page: Decodable {
@@ -724,6 +876,19 @@ private struct ViewData: Decodable {
     let pic: String
     let owner: Owner
     let pages: [Page]
+    /// 充电专属视频
+    let is_upower_exclusive: Bool?
+    /// 付费合集（合集本身要买）
+    let is_pay_season: Bool?
+    let rights: ArchiveRights?
+
+    /// 四种「这条要钱」的说法归一个答案。还有一个 `is_upower_preview`
+    /// （充电专属支不支持试看）和 `arc_pay` / `ugc_pay_preview`（文档写的是
+    /// 「作用尚不明确」）—— 它们说的是**能不能白看一段**，不是要不要钱，
+    /// 所以不参与判定：能试看也一样是付费视频。
+    var isPremium: Bool {
+        is_upower_exclusive == true || is_pay_season == true || (rights?.isPaid ?? false)
+    }
 }
 
 private struct PlayData: Decodable {
@@ -780,6 +945,25 @@ private struct SpaceArcData: Decodable {
             let pic: String
             /// "12:34"，不是秒数
             let length: String
+            /// 充电专属。文档给的这个字段名就是它的本意（「是否为充电视频」）
+            let is_charging_arc: Bool?
+            /// 充电为 1，否则 0。跟上面那个是一件事的两种写法，都收着
+            let elec_arc_type: Int?
+            /// 课堂视频（B 站那种要买的课）
+            let is_lesson_video: Int?
+            /// 文档在这个字段上写的是「作用尚不明确」（示例里一律是 0）。
+            /// 还是收着：投稿列表里**付费合集**里的稿件，除了它就再没有
+            /// 一个字段能看出来了。所以这是个赌注 —— 赌错了（它其实管别的）
+            /// 就是把一枚粉色标记挂到了几条正常视频上，那也不好受。
+            /// 真见着误判，第一件事就是把这个字段从下面那行摘掉。
+            let is_pay: Int?
+
+            var isPremium: Bool {
+                is_charging_arc == true
+                    || (elec_arc_type ?? 0) != 0
+                    || (is_lesson_video ?? 0) != 0
+                    || (is_pay ?? 0) != 0
+            }
         }
         let vlist: [Video]?
     }
@@ -792,6 +976,36 @@ private struct SpaceArcData: Decodable {
 private struct SpaceUserData: Decodable {
     let name: String
     let face: String
+}
+
+/// 关注分组。`data` 直接是个数组，不套 list。
+private struct RelationTagData: Decodable {
+    let tagid: Int
+    let name: String
+    let count: Int
+}
+
+/// 分组里的一个人。`data` 同样直接是数组。
+///
+/// `face` 和 `sign` 写成可空：头像没设过的是空串、简介没写的字段可能压根不来。
+/// `uname` 不空着 —— 接口在这条上没含糊过，真缺了那整组人也就不该显示。
+private struct RelationMemberData: Decodable {
+    let mid: Int
+    let uname: String
+    let face: String?
+    let sign: String?
+}
+
+/// 全部关注的一页。
+///
+/// 跟分组那两条（`data` 直接就是数组）不一样，这个是**一个对象**：
+/// 人装在 `list` 里，`total` 是总人数。`total` 写成可空 —— 少一个统计数
+/// 不该把整页人一起废掉，翻页退回按页满判（见 `followedUsers`）。
+///
+/// 条目形状跟分组里那一条一模一样，共用 `RelationMemberData`。
+private struct RelationFollowingsData: Decodable {
+    let list: [RelationMemberData]
+    let total: Int?
 }
 
 private struct SeasonArchivesData: Decodable {
@@ -808,6 +1022,11 @@ private struct SeasonArchivesData: Decodable {
         let pic: String
         /// 秒
         let duration: Int
+        /// UGC 付费，0 = 否。合集里能看出「这条要钱」的就只有它 ——
+        /// 充电专属在这个接口里没有对应字段，只能漏掉（合集里的充电视频不多见）。
+        let ugc_pay: Int?
+
+        var isPremium: Bool { (ugc_pay ?? 0) != 0 }
     }
     struct Page: Decodable { let total: Int }
 
@@ -874,6 +1093,17 @@ private struct SeasonData: Decodable {
         let cover: String
         /// 毫秒
         let duration: Int
+        /// 分集角标。付费那几集是「会员」/「付费」，免费的是空串 ——
+        /// 实测 ss315697 第 1 集空、第 2 集起「会员」；柯南那种全免费的整季都空。
+        let badge: String?
+
+        /// 「会员」和「付费」都算要钱。「限免」不算：这会儿点开是能白看的，
+        /// 挂上「付费」反而会让人不去点。散装拼出来的 `subtitle` 不用看，
+        /// 它管的是「第 2 集」这种序号。
+        var isPremium: Bool {
+            guard let badge else { return false }
+            return badge.contains("会员") || badge.contains("付费")
+        }
     }
     let episodes: [Episode]
 }
@@ -894,6 +1124,9 @@ private struct ToViewData: Decodable {
         /// 分 P 数量
         let videos: Int?
         let owner: Owner?
+        let rights: ArchiveRights?
+
+        var isPremium: Bool { rights?.isPaid ?? false }
     }
     let count: Int?
     let list: [Entry]?
@@ -920,6 +1153,9 @@ private struct HistoryData: Decodable {
         /// 上次看这条的时间，unix 秒
         let view_at: Int?
         let history: History?
+        let rights: ArchiveRights?
+
+        var isPremium: Bool { rights?.isPaid ?? false }
     }
     /// 翻到头的时候这个也可能不给，所以可空 —— 缺了就把传进来的游标原样带回去
     let cursor: Cursor?

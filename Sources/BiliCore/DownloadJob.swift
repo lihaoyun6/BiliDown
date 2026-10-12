@@ -49,6 +49,13 @@ public struct DownloadJob: Identifiable, Hashable, Sendable, Codable {
     /// 这个视频总共有几 P，拉到信息前是 nil
     public var pageCount: Int?
 
+    /// 付费 / 充电专属（判据见 `VideoInfo.isPremium`）。预取到视频信息时才有值。
+    ///
+    /// **可空是为了老队列**：这个结构是要落盘的（`DownloadQueue` 那套 JSON），
+    /// 非可空的 `Bool` 会让老数据解不出来 —— 而解码是 `try?` 的，解不出来
+    /// 等于**用户排着的那一队整个消失**。宁可这儿多一个问号。
+    public var isPremium: Bool?
+
     /// 实际挑中的那路流是什么画质（编号见 `QualityName`）。
     ///
     /// 取流那一刻才知道，所以排队中的任务还没有 —— 界面上的封面角标

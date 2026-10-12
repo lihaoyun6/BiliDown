@@ -15,10 +15,25 @@ public struct CoverThumbnail: View {
     var cornerRadius: CGFloat = 4
     /// 右下角那个小气泡里的字（时长、分辨率、音频…）。不给就不画。
     var badge: String?
+    /// 付费 / 充电专属的视频：左下角挂一枚粉色的标记（见 `premiumMark`）。
+    ///
+    /// 判据在 `VideoInfo.isPremium` 那一处（各接口的付费字段都在那儿归一）。
+    /// 拉不到这个信息的来源就一直是 false —— 这枚标记**不猜**。
+    var isPremium: Bool = false
 
     /// 气泡离封面两条边的距离。别贴着边，也别离太远 ——
     /// 那张图本身不大，缩进多了气泡就飘在画面中间了。
     private static let badgeInset: CGFloat = 4
+
+    /// 右下角那个气泡的高度，**也是**左下角那枚付费标记的直径。
+    ///
+    /// 这两个数得一样（一左一右两颗角标，一样大才像一对），所以只写这一处：
+    /// 气泡那边显式 `.frame(height:)` 钉死，圆这边直接拿它当直径（见
+    /// `premiumMark`），走不散。
+    ///
+    /// 14 就是气泡原来的**实测高度**：里面一行 `Typography.badge`（10pt semibold）
+    /// 大概 12 高，加上原来那圈 1pt 的上下内边距正好 14。改字号就得重新量一次。
+    private static let badgeHeight: CGFloat = 14
 
     @ObservedObject private var covers = CoverImageStore.shared
 
@@ -28,7 +43,8 @@ public struct CoverThumbnail: View {
         height: CGFloat = ListRowMetrics.coverHeight,
         placeholderSystemImage: String = "film",
         cornerRadius: CGFloat = 4,
-        badge: String? = nil
+        badge: String? = nil,
+        isPremium: Bool = false
     ) {
         self.url = url
         self.width = width
@@ -36,6 +52,7 @@ public struct CoverThumbnail: View {
         self.placeholderSystemImage = placeholderSystemImage
         self.cornerRadius = cornerRadius
         self.badge = badge
+        self.isPremium = isPremium
     }
 
     /// **视频行**（三行字那种行：添加任务的解析列表、收藏夹 / 合集里的视频列表）
@@ -43,12 +60,17 @@ public struct CoverThumbnail: View {
     ///
     /// 那三页是来回翻的，尺寸得一模一样，所以收在这一处 —— 别在各自的视图里
     /// 各写一对数，改一次要满世界找。
-    public static func videoRow(url: URL?, badge: String? = nil) -> CoverThumbnail {
+    public static func videoRow(
+        url: URL?,
+        badge: String? = nil,
+        isPremium: Bool = false
+    ) -> CoverThumbnail {
         CoverThumbnail(
             url: url,
             width: ListRowMetrics.videoCoverWidth,
             height: ListRowMetrics.videoCoverHeight,
-            badge: badge
+            badge: badge,
+            isPremium: isPremium
         )
     }
 
@@ -70,6 +92,8 @@ public struct CoverThumbnail: View {
         // 角标画在裁圆角之前：气泡自己收在框里，裁不裁都够不着边，
         // 但顺序这么摆，万一哪天气泡变大了也不至于先被切成方的。
         .overlay(alignment: .bottomTrailing) { badgeView }
+        // 付费标记在另一个角，跟右下角那个气泡对称着摆（同一圈边距、一样高）
+        .overlay(alignment: .bottomLeading) { premiumMark }
         .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
         .task(id: url) {
             covers.load(url)
@@ -95,14 +119,33 @@ public struct CoverThumbnail: View {
                 // 「1080P60」和「1:02:33」，正常都放得下，写这一笔是为了万一。
                 .lineLimit(1)
                 .truncationMode(.tail)
+                // 高度钉死成 `badgeHeight`（原来是上下各 1pt 的内边距，
+                // 出来正好也是这么高）—— 左下角那枚圆的直径要跟它一般大，
+                // 就得有个写死的数给两边共用。
+                .frame(height: Self.badgeHeight)
                 .foregroundStyle(.white)
                 .padding(.horizontal, 4)
-                .padding(.vertical, 1)
                 // 白底封面上白字等于没写，所以自己带一层深色底。
                 .background(
                     Color.black.opacity(0.6),
                     in: RoundedRectangle(cornerRadius: 3, style: .continuous)
                 )
+                .padding(Self.badgeInset)
+        }
+    }
+
+    /// 左下角那枚「这条要钱」的标记：粉色的圆，里面一个白色的实心闪电
+    /// （长什么样、为什么是这个色，都在 `PremiumMark` 里）。
+    ///
+    /// 边距跟气泡同一个 `badgeInset`、直径就是气泡的高度 `badgeHeight` ——
+    /// 两颗角标一左一右、一样大、一样离边，扫过去是一对。
+    ///
+    /// 下载队列那一行**不走这儿**：那儿的标记摆在标题前面（见 `JobRowView`），
+    /// 参数也就各给各的。
+    @ViewBuilder
+    private var premiumMark: some View {
+        if isPremium {
+            PremiumMark(diameter: Self.badgeHeight)
                 .padding(Self.badgeInset)
         }
     }

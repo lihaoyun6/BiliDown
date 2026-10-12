@@ -309,6 +309,7 @@ struct MacAddTargetsSheet: View {
             ownerName: content.ownerName,
             identifier: content.identifier,
             badge: content.badge,
+            isPremium: content.isPremium,
             trailing: content.trailing,
             onPick: content.canPick ? {
                 picker = resolver.pickerTarget(for: entry)

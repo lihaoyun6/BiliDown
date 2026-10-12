@@ -71,6 +71,13 @@ public final class DownloadQueue: ObservableObject {
         try await client.favoriteItems(folderID: folderID, page: page)
     }
 
+    /// 收藏夹那几页的付费标记（见 `BiliClient.premiumFlag(bvid:)`）——
+    /// **那条路现在封存着，没人调这个**。留着是给「重新打开」那天用的：
+    /// 界面一条一条地问，别在这儿加并发。
+    public func premiumFlag(bvid: String) async -> Bool? {
+        await client.premiumFlag(bvid: bvid)
+    }
+
     // MARK: - 主页 / 合集
 
     /// 展开 UP 主投稿或合集的一页。
@@ -103,6 +110,21 @@ public final class DownloadQueue: ObservableObject {
 
     public func history(cursor: HistoryCursor?) async throws -> (items: [FavItem], hasMore: Bool, cursor: HistoryCursor) {
         try await client.history(cursor: cursor)
+    }
+
+    // MARK: - 我的关注
+
+    public func followGroups() async throws -> [FollowGroup] {
+        try await client.followGroups()
+    }
+
+    public func followGroupMembers(tagID: Int, page: Int = 1) async throws -> (items: [FollowedUser], hasMore: Bool) {
+        try await client.followGroupMembers(tagID: tagID, page: page)
+    }
+
+    /// 全部关注（不分组的那些人也在里面）。
+    public func followedUsers(page: Int = 1) async throws -> (items: [FollowedUser], total: Int, hasMore: Bool) {
+        try await client.followedUsers(page: page)
     }
 
     // MARK: - 队列操作
@@ -236,12 +258,27 @@ public final class DownloadQueue: ObservableObject {
         startIfNeeded()
     }
 
+    /// 正在跑的（不含排队中的）。
     public var activeCount: Int {
         jobs.filter { $0.state.isActive }.count
     }
 
+    /// 排队等着跑的。
     public var queuedCount: Int {
         jobs.filter { $0.state == .queued }.count
+    }
+
+    /// 「还有几个任务没了结」—— **排队中的也算**。
+    ///
+    /// 界面上那个红色角标读的就是这个数：iOS 是标签栏上系统画的
+    ///（`RootView` 的 `.badge`），mac 是侧边栏「下载管理」右边那枚自己画的胶囊。
+    /// 只数 `activeCount` 是不对的：并行数就那么几个，点了「全部开始」之后
+    /// 绝大多数任务都在排队，那会儿角标反而是 0，看着像什么都没发生。
+    ///
+    /// 停下的、下完的、失败的都不算 —— 它们不会自己往前走了。
+    /// 这跟 `停止` 那条路的口径是一致的（`stopAll` 停的就是 queued + 在跑的）。
+    public var inFlightCount: Int {
+        activeCount + queuedCount
     }
 
     // MARK: - 元信息预取
@@ -271,6 +308,8 @@ public final class DownloadQueue: ObservableObject {
                     job.coverURL = info.coverURL
                     job.pageCount = info.pages.count
                     job.resolvedBVID = info.bvid
+                    // 队列行也是「一行视频」：要钱的跟别的列表一样挂标记
+                    job.isPremium = info.isPremium
 
                     let wanted = job.pageNumber ?? 1
                     if let page = info.pages.first(where: { $0.page == wanted }) ?? info.pages.first {
@@ -304,6 +343,7 @@ public final class DownloadQueue: ObservableObject {
             job.pageNumber = page.page
             job.pageTitle = page.title
             job.cid = page.cid
+            job.isPremium = info.isPremium
             job.metadataPrefetched = true
         }
 
@@ -421,6 +461,7 @@ public final class DownloadQueue: ObservableObject {
                         $0.coverURL = info.coverURL
                         $0.pageCount = info.pages.count
                         $0.resolvedBVID = info.bvid
+                        $0.isPremium = info.isPremium
                         $0.cid = page.cid
                         $0.metadataPrefetched = true
                         $0.pageNumber = info.isMultiPage ? page.page : nil

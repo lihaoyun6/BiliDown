@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import BiliCore
 import BiliKit
 import BiliUI
 
@@ -49,10 +50,9 @@ struct BiliDownMacApp: App {
 
 /// App 自己那几句介绍性的字。
 ///
-/// 现在只有一句「这是什么」。它要出现在**两个**「关于」里：系统那个
-/// 「关于 BiliDown」面板（下面 `MacCommands` 把它当 credits 递进去），
-/// 和设置页「关于程序」那一组。写两份的话，改一处忘一处，
-/// 两个「关于」就开始说不一样的话了。
+/// 现在只有一句「这是什么」。**只在**系统那个「关于 BiliDown」面板里出现
+///（下面 `MacCommands` 把它当 credits 递进去）—— 设置页不放它：
+/// 那句话是「关于」的内容，不是一条设置。
 enum MacAppInfo {
 
     /// 一句话说明这是个什么 App。摆在大名底下的那行。
@@ -81,6 +81,24 @@ final class MacNavigator: ObservableObject {
     /// 按 `kind` 分开存：收藏和合集是同一个视图，只差一个 kind，
     /// 混在一个变量里就会出现「在合集里点开的东西跑到收藏里去了」。
     @Published var openedLibrary: [LibraryListKind: LibrarySource] = [:]
+
+    /// 「关注」那一栏点到了哪一层：分组 →（全部关注 / 某一组）里的人 → TA 的投稿。
+    ///
+    /// 三级，所以存两个。为什么也得存在视图外面，理由跟上面那条一样：
+    /// 切栏目会把 detail 整个重建，@State 留不住 —— 去下载页转一圈再回来，
+    /// 人就站在分组那一层了。
+    ///
+    /// 中间那一层存的是 `FollowScope` 而不是 `FollowGroup`：那一层有**两种**
+    /// 可能（「全部关注」或某一个分组），而「全部关注」不是一个分组 ——
+    /// 它没有 tagid，走的是另一个接口（见 `FollowScope`）。
+    /// 拿一个假 tagid 塞进 `openedFollowGroup` 是糊弄状态，迟早出事。
+    /// nil = 停在最上面那一层（分组列表）。
+    ///
+    /// 点开某个人之后 `openedFollowUser` 有值，屏幕上摆的是
+    /// `MacLibraryDetailView(source: .uploads(…))`；再往下的状态（勾了哪几个视频）
+    /// 归它自己管，这儿不用再存第三个。
+    @Published var openedFollowScope: FollowScope?
+    @Published var openedFollowUser: FollowedUser?
 }
 
 /// 菜单栏。整组整组地覆盖系统默认那套 —— 这个 App 不是文档型应用，

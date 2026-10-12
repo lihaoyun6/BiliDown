@@ -1,8 +1,8 @@
 import Foundation
 import BiliCore
 
-/// 一页「一堆视频，勾几个下载」的来源。收藏夹、合集、一季番剧、稍后再看、
-/// 历史记录点进去之后长得一模一样：都是勾选 + 入队那套，区别只在标题、
+/// 一页「一堆视频，勾几个下载」的来源。收藏夹、合集、一季番剧、UP 主投稿、
+/// 稍后再看、历史记录点进去之后长得一模一样：都是勾选 + 入队那套，区别只在标题、
 /// 空态那几句话和从哪个接口拉，所以合成一个来源类型，界面共用一套。
 public enum LibrarySource: Hashable {
 
@@ -11,7 +11,14 @@ public enum LibrarySource: Hashable {
     /// 一季番剧 / 剧集。分集从 PGC 接口拉（见 BiliClient.seasonEpisodes）。
     case season(FollowedSeason)
 
-    /// 下面这两个也是**自己一页**的来源：从「更多」（iOS）和侧边栏（mac）直接进去，
+    /// 某个 UP 主的全部投稿。
+    ///
+    /// 只有 iOS 的「我的关注」那条路会造出它：分组 → 人 → TA 的投稿。
+    /// 投稿接口按发布时间倒序给（`order=pubdate`），所以列表天然是新的在上、
+    /// 老的在下 —— 不用在这儿再排一道。
+    case uploads(mid: Int, ownerName: String)
+
+    /// 下面这两个也是**自己一页**的来源：从「我的」（iOS）和侧边栏（mac）直接进去，
     /// 没有上一层列表。
     case watchLater
     case history
@@ -21,6 +28,10 @@ public enum LibrarySource: Hashable {
         case .folder(let folder): return folder.title
         case .collection(let collection): return collection.title
         case .season(let season): return season.title
+        // 名字是从上一页带过来的（那一页本来就有），接口第一页也会回一份，
+        // 但等它回来标题栏得先空一下，不如直接用手里这个。
+        // 万一上游没给名字（不该发生），也别让标题栏空着。
+        case .uploads(_, let ownerName): return ownerName.isEmpty ? "投稿" : ownerName
         case .watchLater: return "稍后再看"
         case .history: return "历史记录"
         }
@@ -31,6 +42,7 @@ public enum LibrarySource: Hashable {
         case .folder: return "空收藏夹"
         case .collection: return "空合集"
         case .season: return "这一季还没有分集"
+        case .uploads: return "TA 还没有投稿"
         case .watchLater: return "稍后再看是空的"
         case .history: return "没有观看记录"
         }
@@ -41,6 +53,7 @@ public enum LibrarySource: Hashable {
         case .folder: return "读不到这个收藏夹"
         case .collection: return "读不到这个合集"
         case .season: return "读不到这一季的分集"
+        case .uploads: return "读不到 TA 的投稿"
         case .watchLater: return "读不到稍后再看"
         case .history: return "读不到历史记录"
         }
@@ -51,12 +64,13 @@ public enum LibrarySource: Hashable {
     /// 收藏夹 / 合集 / 一季番剧的数量是接口直接给的，能用。
     /// 稍后再看和历史记录不给总数（历史是游标翻页，翻到哪算哪），是 nil ——
     /// 但它们**还有没有全选那一行是另一回事**（见 `supportsSelectAll`）。
+    /// 投稿也是 nil：第一页才知道总数，而这是个不联网就答不上来的问题。
     public var videoCount: Int? {
         switch self {
         case .folder(let folder): return folder.mediaCount
         case .collection(let collection): return collection.videoCount
         case .season(let season): return season.episodeCount
-        case .watchLater, .history: return nil
+        case .uploads, .watchLater, .history: return nil
         }
     }
 
@@ -68,26 +82,15 @@ public enum LibrarySource: Hashable {
     /// 稍后再看也摆：它一次给全（B 站这个列表封顶 100 条，没有下一页），
     /// 点开列表就已经是全部，数手里这一份就是准数（见列表页里的 `selectedCount`）。
     ///
+    /// 投稿也摆：翻完页之后手里就是全部，数得出来（跟稍后再看同一条路）。
+    ///
     /// 历史记录**不摆**：它是游标翻页的，往下能一直翻，翻到哪算哪 ——
     /// 一个报不出数来的「全选」点下去，只会让所有行都看着勾上了、
     /// 按钮却是灰的。
     public var supportsSelectAll: Bool {
         switch self {
-        case .folder, .collection, .season, .watchLater: return true
+        case .folder, .collection, .season, .uploads, .watchLater: return true
         case .history: return false
-        }
-    }
-
-    /// 这个来源是不是**自己一页**的（追番分集 / 稍后再看 / 历史记录）。
-    ///
-    /// 收藏夹和合集是从上一层的列表里点进来的，所以它们的名字挂在列表里
-    ///（iOS 上「全选」那一行的右端），标题栏统一叫「选择视频」——
-    /// 见 VideoPickerView。自己一页的那几个没有上一层，页名就是它的名字：
-    /// 标题栏得写自己的名字，列表里那一格改成报已选数量（跟 mac 一样）。
-    public var isStandalone: Bool {
-        switch self {
-        case .folder, .collection: return false
-        case .season, .watchLater, .history: return true
         }
     }
 }
