@@ -330,7 +330,10 @@ struct DownloadsView: View {
     private func cleanFinished() {
         let before = queue.jobs.count
         queue.removeFinished()
-        hud = HUD(icon: "xmark.bin.fill", text: "已清理 \(before - queue.jobs.count) 个任务")
+        // 图标跟工具栏那颗「清理列队」是同一颗龙卷风。**这儿不带圈**：
+        // 旁边那条「已清空列队」的垃圾桶也是不带圈的（工具栏上那颗倒是
+        // `trash.circle.fill`）—— HUD 里这两颗摆一起，都光着才是一对。
+        hud = HUD(icon: "tornado", text: "已清理 \(before - queue.jobs.count) 个任务")
     }
 
     private func copyReport() {

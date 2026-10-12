@@ -103,7 +103,9 @@ final class MacQueueActions: ObservableObject {
         case .cleanFinished:
             let before = queue.jobs.count
             queue.removeFinished()
-            hud = HUD(icon: "xmark.bin.fill", text: "已清理 \(before - queue.jobs.count) 个任务")
+            // 跟顶栏那颗「清理列队」是同一颗龙卷风（都是不带圈的）。
+            // 旁边「已清空列队」的垃圾桶同理。
+            hud = HUD(icon: "tornado", text: "已清理 \(before - queue.jobs.count) 个任务")
 
         case .stopAll:
             let stopped = queue.stopAll()

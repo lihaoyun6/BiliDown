@@ -35,7 +35,7 @@ settings:
     SWIFT_VERSION: "5.0"
     # 版本号和构建号的唯一来源，plist 里引用这两个，别再各自写死一份
     MARKETING_VERSION: "1.0.2"
-    CURRENT_PROJECT_VERSION: "102"
+    CURRENT_PROJECT_VERSION: "103"
     CODE_SIGN_STYLE: Automatic
     SWIFT_STRICT_CONCURRENCY: minimal
     ENABLE_USER_SCRIPT_SANDBOXING: YES
