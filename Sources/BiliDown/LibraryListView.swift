@@ -5,12 +5,14 @@ import BiliUI
 
 /// 一页「列表的列表」：我订阅的合集 / 我的追番 / 我的追剧。
 ///
-/// 这三页在 iOS 上都从「更多」推进来，形状一样 —— 一列条目，点进去才是视频
+/// 这三页在 iOS 上都从「我的」推进来，形状一样 —— 一列条目，点进去才是视频
 ///（合集点进去是合集里的视频，追番点进去是那一季的分集）。区别只有拉哪个接口、
-/// 行上摆什么，所以共用这一个页面；收藏那页不在这儿，它是标签栏自己一整页。
+/// 行上摆什么，所以共用这一个页面；收藏那页不在这儿，它自己一页
+///（`FavoritesView`）。
 ///
 /// **不套 `NavigationStack`**：这几页是推进来的 —— 再套一层就是导航栈里套导航栈，
 /// 顶上会叠出两条栏。标题、搜索框照旧，它们本来就归上面那一层管。
+/// 标题读 `kind.mineTitle` —— 跟「我的」里那一行是同一个名字。
 ///
 /// mac 那边对应的是 `MacLibraryList`（同一个 `LibraryListKind`）。
 struct LibraryListView: View {
@@ -72,7 +74,7 @@ struct LibraryListView: View {
                 LoadMoreSpinner()
             }
         }
-        .navigationTitle(kind.title)
+        .navigationTitle(kind.mineTitle)
         .searchable(
             text: $query,
             placement: .navigationBarDrawer(displayMode: .always),

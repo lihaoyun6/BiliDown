@@ -99,8 +99,12 @@ public enum LibrarySource: Hashable {
 ///
 /// 这四页点进去之后都是一层**列表**（夹子 / 合集 / 一季），再点一层才是视频 ——
 /// 所以跟 `LibrarySource` 不是一回事：那个是「视频列表」，这个是「列表列表」。
-/// 标题和几句提示文案都摆在这儿，iOS 和 mac 两个列表页共用（mac 那份多一个
-/// `favorites`：iOS 的收藏是标签栏自己一整页，不走这个）。
+/// 搜索框提示和几句空态文案摆在这儿，两个平台共用。
+///
+/// **名字（标题 / 入口名）不在这儿**：同一件事两边叫法不一样（iOS 那边是
+/// 「订阅合集」，mac 侧边栏上叫「我的合集」），所以各归各的平台文件
+///（iOS 见 `LibraryListKind.mineTitle`，mac 见 `MacLibraryList.macWindowTitle`）。
+/// 从前这儿有一份短的（收藏 / 合集）给两端当标题用，就是它跟入口名对不上的。
 public enum LibraryListKind: Hashable {
 
     case favorites
@@ -108,20 +112,12 @@ public enum LibraryListKind: Hashable {
     case bangumi
     case drama
 
-    public var title: String {
-        switch self {
-        case .favorites: return "收藏"
-        case .collections: return "合集"
-        case .bangumi: return "我的追番"
-        case .drama: return "我的追剧"
-        }
-    }
-
     public var searchPrompt: String {
         switch self {
         case .favorites: return "搜索收藏夹"
         case .collections: return "搜索合集"
-        case .bangumi, .drama: return "搜索"
+        // 追番 / 追剧搜的都是一季一季的「剧集」—— 光一个「搜索」看不出搜的是什么
+        case .bangumi, .drama: return "搜索剧集"
         }
     }
 

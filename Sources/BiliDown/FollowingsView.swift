@@ -18,6 +18,10 @@ import BiliUI
 /// 「需要登录后才能拿到这个画质」—— 摆在关注分组上驴唇不对马嘴。
 struct FollowGroupsView: View {
 
+    /// 这一页的名字。「我的」里那一行读的是同一个 ——
+    /// 名字写两份，就会再有「行上叫我的关注、进去标题少几个字」这种事。
+    static let pageTitle = "我的关注"
+
     @EnvironmentObject private var queue: DownloadQueue
 
     @State private var groups: [FollowGroup] = []
@@ -75,7 +79,7 @@ struct FollowGroupsView: View {
                 }
             }
         }
-        .navigationTitle("我的关注")
+        .navigationTitle(Self.pageTitle)
         // 分组一次全拉回来了，就地筛（跟收藏夹那页一样）
         .searchable(
             text: $query,

@@ -499,9 +499,10 @@ private extension LibraryListKind {
 
     /// 窗口标题读侧边栏那一套名字（「我的收藏」，不是「收藏」）。
     ///
-    /// `LibraryListKind.title` 是两端共用的，那份不能动：iOS 的收藏就是标签栏里
-    /// 自己一整页，那边叫「收藏」才对。所以在这边转一道 —— 转出来的仍然是
-    /// `MacRootView.Section.title` 那个唯一的名字，不另起一份文案。
+    /// 名字是**各平台自己的**（同一件事两端叫法不一样），所以 mac 这边转一道，
+    /// 转出来的仍然是 `MacRootView.Section.title` 那个唯一的名字，不另起文案。
+    /// iOS 那边对应的是 `LibraryListKind.mineTitle`（它叫「订阅合集」，
+    /// 这条侧边栏上叫「我的合集」）。
     var macWindowTitle: String {
         switch self {
         case .favorites: return MacRootView.Section.favorites.title

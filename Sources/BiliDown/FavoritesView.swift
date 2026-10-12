@@ -27,7 +27,9 @@ struct FavoritesView: View {
         // 搜索框照旧是 `.navigationBarDrawer(displayMode: .always)`：
         // 推入的页面一样认这个摆法，框还是常驻在标题底下、往上推列表时跟着大标题缩。
         content
-            .navigationTitle("收藏")
+            // 标题跟「我的」里那一行读同一份（见 `LibraryListKind.mineTitle`）。
+            // 这儿从前硬写着「收藏」：进了页面标题反而比入口少一个字，像两件事。
+            .navigationTitle(LibraryListKind.favorites.mineTitle)
             // .always：搜索框常驻在标题底下，不跟着列表滚走 ——
             // 它是这一页的入口，藏起来等于没有。
             // 用系统这一个是图它能跟导航栏联动：往上推列表，大标题会缩成
@@ -37,7 +39,8 @@ struct FavoritesView: View {
             .searchable(
                 text: $query,
                 placement: .navigationBarDrawer(displayMode: .always),
-                prompt: "搜索收藏夹"
+                // 跟标题同一个道理：这一页的文案归 `LibraryListKind` 那一份，不另写
+                prompt: LibraryListKind.favorites.searchPrompt
             )
             .task { await load() }
             .refreshable { await load() }

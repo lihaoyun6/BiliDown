@@ -196,7 +196,8 @@ struct MineView: View {
     /// 所以点进去那一页不必自己处理「没登录」—— 它只在登录后才画得出来。
     private var followSection: some View {
         Section {
-            row(title: "我的关注", systemImage: "person.2") {
+            // 名字取自那一页自己（同下面那串入口的口径），不在这儿另写一份
+            row(title: FollowGroupsView.pageTitle, systemImage: "person.2") {
                 FollowGroupsView()
             }
         }
@@ -210,22 +211,19 @@ struct MineView: View {
     /// 这一组也跟登录态走（同 `followSection`）—— 它们本来就全是账号里的东西。
     private var librarySection: some View {
         Section {
-            // 收藏夹列表。行上写「我的收藏」，点进去那页的标题是「收藏」
-            //（`FavoritesView` 里定的）—— 跟下面「订阅合集 / 合集」一个道理：
-            // 摆在这一页上，光「收藏」两个字看着像「收藏这个 App」，
-            // 补个「我的」才是在说「我收藏的那些」。
-            // 图标仍旧归 `LibraryListKind` 管，不在这儿另写一个。
-            row(title: "我的收藏", systemImage: LibraryListKind.favorites.icon) {
+            // 收藏夹列表。行上的名字和点进去那页的标题是**同一份**
+            //（`LibraryListKind.mineTitle`）—— 这两个从前各写各的，就出过
+            // 「行上叫我的收藏、进了页面标题还写着收藏」这种事。
+            // 图标也归 `LibraryListKind` 管，这儿不另写一个。
+            row(title: LibraryListKind.favorites.mineTitle, systemImage: LibraryListKind.favorites.icon) {
                 FavoritesView()
             }
 
-            // 这一行写「订阅合集」而点进去那页的标题是「合集」：
-            // 在这张单子上「合集」两个字太素，看不出是「我订阅的那些」。
-            list(.collections, title: "订阅合集")
+            list(.collections)
 
             // 追番 / 追剧进的是「一季一季」的列表，再点一层才是分集
-            list(.bangumi, title: "我的追番")
-            list(.drama, title: "我的追剧")
+            list(.bangumi)
+            list(.drama)
         }
     }
 
@@ -235,23 +233,27 @@ struct MineView: View {
     /// 直接就是视频列表，没有中间那层（见 `entry`）。
     private var watchSection: some View {
         Section {
-            entry(.watchLater, title: "稍后再看", systemImage: "clock")
-            entry(.history, title: "历史记录", systemImage: "clock.arrow.circlepath")
+            entry(.watchLater, systemImage: "clock")
+            entry(.history, systemImage: "clock.arrow.circlepath")
         }
     }
 
     /// 稍后再看 / 历史记录：点进去就是视频列表，没有中间那层。
-    private func entry(_ source: LibrarySource, title: String, systemImage: String) -> some View {
-        row(title: title, systemImage: systemImage) {
+    ///
+    /// 名字取自 `LibrarySource.title`，那也正是点进去那一页自己的标题
+    ///（`VideoPickerView` 读的是同一个）—— 行和页面对不上是不可能的。
+    private func entry(_ source: LibrarySource, systemImage: String) -> some View {
+        row(title: source.title, systemImage: systemImage) {
             VideoPickerView(source: source)
         }
     }
 
     /// 订阅合集 / 我的追番 / 我的追剧：先是一列条目，点进去才是视频。
-    /// 图标归 `LibraryListKind` 管（跟那一页自己的空态图标同一个来源），
-    /// 这儿不再抄一遍；行上的名字这一层自己给（有几行跟页标题不叫同一个名）。
-    private func list(_ kind: LibraryListKind, title: String) -> some View {
-        row(title: title, systemImage: kind.icon) {
+    /// 名字和图标都归 `LibraryListKind`（名字见 `mineTitle`，图标跟那一页
+    /// 自己的空态图标同一个来源），这儿不再抄一遍 —— 抄一遍就会再有
+    /// 「行上叫订阅合集、页面标题写着合集」这种对不上。
+    private func list(_ kind: LibraryListKind) -> some View {
+        row(title: kind.mineTitle, systemImage: kind.icon) {
             LibraryListView(kind: kind)
         }
     }
@@ -274,6 +276,28 @@ struct MineView: View {
                 Text(title)
             }
             .padding(.vertical, 2)
+        }
+    }
+}
+
+extension LibraryListKind {
+
+    /// iOS 上这个入口的名字。**「我的」里那一行、点进去那一页的标题，读的都是它。**
+    ///
+    /// 从前这两处各写一份：行上补了「我的」「订阅」几个字，页面标题还留着
+    /// `LibraryListKind.title` 那份短的（收藏 / 合集），于是进了页面名字反而变短。
+    /// 收成一份之后两边不可能再对不上。
+    ///
+    /// 名字跟 mac 那条侧边栏**故意不一样**：那边九个词彼此不挨着，光「合集」
+    /// 读着像个动词，所以叫「我的合集」；这边是在「我的」页的一张单子上，
+    /// 一列全是自己的东西，「订阅合集」说的是「我订阅来的那些」，更有用
+    ///（mac 那份见 `MacLibraryList.macWindowTitle`）。
+    var mineTitle: String {
+        switch self {
+        case .favorites: return "我的收藏"
+        case .collections: return "订阅合集"
+        case .bangumi: return "我的追番"
+        case .drama: return "我的追剧"
         }
     }
 }
